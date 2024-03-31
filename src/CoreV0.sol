@@ -10,6 +10,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 // ==              CUSTOM ERRORS             ==
 // ============================================
 error DurationNotPassed();
+error DurationTooLong();
+error DurationTooShort();
 error InsufficientRewards();
 error InvalidAddress();
 error InvalidAmount();
@@ -66,7 +68,7 @@ contract CoreV0 is ReentrancyGuard {
 
     uint256 public constant TRIBUTE_PERCENT = 5;
     uint256 public constant MAX_STAKE_DURATION = 31536000;
-    uint256 public constant MAX_APR = 50;
+    uint256 public constant MAX_APR = 100;
 
     uint256 public stakedTokensTotal; // The LP tokens users have staked
     uint256 public withdrawableTokensTotal; // The LP tokens users can withdraw, rest is available to the Guardian
@@ -121,48 +123,35 @@ contract CoreV0 is ReentrancyGuard {
     /// @dev New stakes are only accepted if sufficient rewards are available
     /// @param _amount The amount of LP tokens staked
     /// @param _duration The number of seconds until rewards can be claimed upon unstaking
-    /// @param _minAddedRewards The minimum number of (additional) PSM rewards accepted
+    /// @param _minRewards The minimum number of (additional) PSM rewards accepted
     function stake(
         uint256 _amount,
         uint256 _duration,
-        uint256 _minAddedRewards
+        uint256 _minRewards
     ) external {
         /// @dev Check that the amount is valid
         if (_amount == 0) {
             revert InvalidAmount();
         }
 
-        /// @dev Set helper variables for conditions
-        uint256 time = block.timestamp;
-        uint256 endTime = time + _duration;
-
-        Stake storage userStake = stakes[msg.sender];
-        uint256 stakedBalance = userStake.stakedBalance + _amount;
-        uint256 oldRewards = userStake.reservedRewards;
-        uint256 addedRewards = getRewardsForStake(_amount, _duration);
-        uint256 newRewards = oldRewards + addedRewards;
-
-        /// @dev Only allow extending the stake duration
-        if (endTime < userStake.stakeEndTime) {
-            revert InvalidDuration();
-        }
-
         /// @dev Ensure that user receives the desired rewards
-        if (addedRewards < _minAddedRewards) {
+        uint256 rewards = getRewardsOnStaking(msg.sender, _amount, _duration);
+        if (rewards < _minRewards) {
             revert InsufficientRewards();
         }
 
         /// @dev Update the user's stake information
-        userStake.stakedBalance = stakedBalance;
-        userStake.reservedRewards = newRewards;
-        userStake.stakeEndTime = endTime;
+        Stake storage userStake = stakes[msg.sender];
+        userStake.stakedBalance += _amount;
+        userStake.reservedRewards += rewards;
+        userStake.stakeEndTime += _duration;
         userStake.savedIncentives += getUserAvailableIncentives(msg.sender);
-        userStake.lastDistributionTime = time;
+        userStake.lastDistributionTime = block.timestamp;
 
         /// @dev Update the global stake information
         stakedTokensTotal += _amount;
         withdrawableTokensTotal += (_amount * (100 - TRIBUTE_PERCENT)) / 100;
-        reservedRewardsTotal += addedRewards;
+        reservedRewardsTotal += rewards;
 
         /// @dev Transfer tokens to contract
         IERC20(STAKING_TOKEN).safeTransferFrom(
@@ -312,30 +301,62 @@ contract CoreV0 is ReentrancyGuard {
             reservedRewardsTotal;
     }
 
-    /// @notice Display the potential rewards a user can get on a particular stake
-    /// @dev Calculate staking rewards for a new stake
+    /// @notice Display the potential rewards a user can get from staking or increasing a stake
+    /// @dev Calculate staking rewards for a new stake and the extension of an old stake
     /// @return rewards The amount of PSM reserved for this stake
-    function getRewardsForStake(
+    function getRewardsOnStaking(
+        address _user,
         uint256 _amount,
         uint256 _duration
     ) public view returns (uint256 rewards) {
         /// @dev Ensure that duration is valid
         if (_duration > MAX_STAKE_DURATION) {
-            revert InvalidDuration();
+            revert DurationTooLong();
         }
+
+        /// @dev Get the existing stake data of the user
+        Stake memory userStake = stakes[_user];
+
+        /// @dev Ensure that the new stake maturity is at least equal to the existing stake
+        uint256 endTime = block.timestamp + _duration;
+        if (endTime < userStake.stakeEndTime) {
+            revert DurationTooShort();
+        }
+
+        /// @dev Calculate the extended duration on the existing stake
+        /// @dev Known edge case: users cannot add a stake with max Duration if their existing stake has matured already
+        /// @dev Possible stake durations will decline until adding a stake becomes impossible after 2 * MAX_STAKE_DURATION
+        /// @dev This can be avoided by unstaking and restaking or by staking 1 WEI before performing the intended stake
+        uint256 extendedDuration = (userStake.stakeEndTime == 0)
+            ? 0
+            : endTime - userStake.stakeEndTime;
+
+        /// @dev Ensure that extending the duration of the existing stake is within the duration limits
+        if (extendedDuration > MAX_STAKE_DURATION) {
+            revert DurationTooLong();
+        }
+
+        /// @dev reward APR increases linear with stake duration, hence rewards increase exponential
+        uint256 rewards_newStake = (_amount *
+            (2 * PSM_IN_LP) *
+            MAX_APR *
+            _duration ** 2) /
+            (LP_TOTAL_SUPPLY * 100 * MAX_STAKE_DURATION * SECONDS_PER_YEAR);
+
+        uint256 rewards_oldStake = (userStake.stakedBalance *
+            2 *
+            PSM_IN_LP *
+            MAX_APR *
+            extendedDuration ** 2) /
+            (LP_TOTAL_SUPPLY * 100 * MAX_STAKE_DURATION * SECONDS_PER_YEAR);
+
+        rewards = rewards_newStake + rewards_oldStake;
 
         /// @dev Get the available rewards in contract
         uint256 availableRewards = getAvailableRewards();
 
-        /// @dev reward APR increases linear with stake duration, hence rewards increase exponential
-        uint256 grossRewards = ((2 * PSM_IN_LP * MAX_APR * _duration ** 2) *
-            _amount) /
-            (LP_TOTAL_SUPPLY * SECONDS_PER_YEAR * MAX_STAKE_DURATION * 100);
-
         /// @dev Ensure that rewards cannot be greater than available rewards
-        rewards = (grossRewards > availableRewards)
-            ? availableRewards
-            : grossRewards;
+        rewards = (rewards > availableRewards) ? availableRewards : rewards;
     }
 
     /// @notice Return the amount of PSM that the user can distribute as incentives

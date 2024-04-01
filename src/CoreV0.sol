@@ -17,6 +17,7 @@ error InvalidAddress();
 error InvalidAmount();
 error InvalidConstructor();
 error InvalidDuration();
+error NoStake();
 error NoTribute();
 error NotGuardian();
 error NotWhitelisted();
@@ -56,8 +57,6 @@ contract CoreV0 is ReentrancyGuard {
     uint256 private immutable PSM_IN_LP;
     uint256 private immutable LP_TOTAL_SUPPLY;
     uint256 private constant SECONDS_PER_YEAR = 31536000;
-    address private constant HLP_PORTAL =
-        0x24b7d3034C711497c81ed5f70BEE2280907Ea1Fa;
 
     address public constant GUARDIAN =
         0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
@@ -86,21 +85,24 @@ contract CoreV0 is ReentrancyGuard {
 
     mapping(address user => Stake) public stakes; // associate users with their stake
     mapping(address user => uint256 level) public userLevels; // associate users with their governance level
-    mapping(address => bool allowed) public whitelist; // addresses that can receive PSM incentives
+    mapping(address destination => bool allowed) public whitelist; // addresses that can receive PSM incentives
 
     // ============================================
     // ==                EVENTS                  ==
     // ============================================
     event Staked(address indexed user, uint256 amount);
-    event Unstaked(address indexed user, uint256 amount);
-    event RewardsSent(address indexed user, uint256 amount);
+    event Unstaked(
+        address indexed user,
+        uint256 amount,
+        uint256 rewardsClaimed
+    );
     event IncentivesDistributed(
         address indexed user,
         address indexed destination,
         uint256 amount
     );
 
-    event WhitelistUpdated(address destination, bool listed);
+    event WhitelistUpdated(address indexed destination, bool listed);
 
     // ============================================
     // ==               MODIFIERS                ==
@@ -118,17 +120,17 @@ contract CoreV0 is ReentrancyGuard {
     /// @notice Users stake LP tokens for a chosen duration to gain rewards and control over incentives
     /// @dev This function allows a specific LP token to be staked
     /// @dev Upon staking, a fee is applied on the principal that can be withdrawn by the Guardian
-    /// @dev Users can add to stakes at any time which may prolong the duration until rewards can be claimed
+    /// @dev Users can add to stakes at any time which prolongs the stake duration
     /// @dev The rewards for stakers are reserved immediately to ensure payouts at maturity
     /// @dev New stakes are only accepted if sufficient rewards are available
     /// @param _amount The amount of LP tokens staked
     /// @param _duration The number of seconds until rewards can be claimed upon unstaking
-    /// @param _minRewards The minimum number of (additional) PSM rewards accepted
+    /// @param _minRewards The minimum number of (additional) PSM rewards
     function stake(
         uint256 _amount,
         uint256 _duration,
         uint256 _minRewards
-    ) external {
+    ) external nonReentrant {
         /// @dev Check that the amount is valid
         if (_amount == 0) {
             revert InvalidAmount();
@@ -164,23 +166,63 @@ contract CoreV0 is ReentrancyGuard {
         emit Staked(msg.sender, _amount);
     }
 
-    /// @notice Enable users to withdraw their stake and claim rewards if stake is mature
+    /// @notice Enable users to withdraw their stake and claim rewards if the stake is matured
+    /// @dev Delete the user stake data
+    /// @dev If the stake duration has passed, claim all rewards, otherwise forfeit all rewards
     /// @dev Withdraw the staked amount of LP tokens less tribute
-    /// @dev If the stake duration has passed, claim all rewards, otherwise forfeit
-    function unstakeAndClaimRewards() external {
-        /// @dev Check that the stake duration has passed
-        if (1 == 1) {
-            revert DurationNotPassed();
+    function unstakeAndClaim() external nonReentrant {
+        /// @dev Load user stake data
+        Stake memory userStake = stakes[msg.sender];
+
+        /// @dev Check that the user has a stake
+        if (userStake.stakedBalance == 0) {
+            revert NoStake();
         }
+
+        /// @dev Calculate withdrawable LP tokens to user
+        uint256 withdrawable = (userStake.stakedBalance *
+            (100 - TRIBUTE_PERCENT)) / 100;
+
+        /// @dev Update global stake trackers
+        stakedTokensTotal -= userStake.stakedBalance;
+        withdrawableTokensTotal -= withdrawable;
+        reservedRewardsTotal -= userStake.reservedRewards;
+
+        /// @dev Delete the user stake
+        delete stakes[msg.sender];
+
+        /// @dev Transfer rewards if the stake duration has passed
+        /// @dev If duration has not passed, rewards become available in the contract again
+        uint256 time = block.timestamp;
+        if (time >= userStake.stakeEndTime) {
+            IERC20(PSM_ADDRESS).safeTransfer(
+                msg.sender,
+                userStake.reservedRewards
+            );
+        }
+
+        /// @dev Return withdrawable stake to user
+        IERC20(STAKING_TOKEN).safeTransfer(msg.sender, withdrawable);
+
+        /// @dev Emit event that a stake was withdrawn and rewards claimed
+        emit Unstaked(
+            msg.sender,
+            userStake.stakedBalance,
+            userStake.reservedRewards
+        );
     }
 
     // ============================================
     // ==        DISTRIBUTE INCENTIVES           ==
     // ============================================
+    /// @notice Users can distribute PSM incentives to whitelisted addresses and gain governance levels
+    /// @dev If sufficient PSM is available, proceed to distribute the amount to a whitelisted address
+    /// @dev Increase the governance level of the user according to distributed rewards
+    /// @dev Update the global tracker of distributed rewards
     function distributeIncentives(
         address _destination,
         uint256 _amount
-    ) external {
+    ) external nonReentrant {
         /// @dev Check that the destination is valid
         if (!whitelist[_destination]) {
             revert InvalidAddress();
@@ -205,7 +247,7 @@ contract CoreV0 is ReentrancyGuard {
         _stake.lastDistributionTime = block.timestamp;
         _stake.incentivesDistributed += _amount;
 
-        /// @dev Check if saved incentives must be used
+        /// @dev Check if saved incentives must be deducted
         uint256 floatingIncentives = availableIncentives -
             _stake.savedIncentives;
         uint256 deductible = (floatingIncentives < _amount)
@@ -218,6 +260,7 @@ contract CoreV0 is ReentrancyGuard {
         /// @dev Active participants can gain roughly 200 levels in the first year (exponential growth)
         uint256 stakedValue = (2 * PSM_IN_LP * _stake.stakedBalance) /
             LP_TOTAL_SUPPLY;
+
         userLevels[msg.sender] =
             (_stake.incentivesDistributed * 630) /
             stakedValue;
@@ -252,11 +295,11 @@ contract CoreV0 is ReentrancyGuard {
             revert InvalidAmount();
         }
 
-        IERC20(_token).safeTransfer(GUARDIAN, balance);
+        IERC20(_token).safeTransfer(msg.sender, balance);
     }
 
     /// @notice Add or remove an address from the whitelist
-    /// @dev Allow the guardian to update the whitelist mapping
+    /// @dev Allow the Guardian to update the whitelist mapping
     /// @param _destination The address added or removed from the whitelist
     function updateWhitelist(
         address _destination,
@@ -273,16 +316,17 @@ contract CoreV0 is ReentrancyGuard {
     }
 
     /// @notice Enable the Guardian to withdraw accrued tributes
-    /// @dev Withdraw accrued tributes in LP tokens to Guardian address
+    /// @dev Withdraw accrued tributes in LP tokens to the Guardian address
     function withdrawTribute() external onlyGuardian {
-        /// @dev Check that there are accrued fees
-        if (withdrawableTokensTotal >= stakedTokensTotal) {
+        /// @dev Check that there are accrued tributes
+        uint256 balance = IERC20(STAKING_TOKEN).balanceOf(address(this));
+        if (withdrawableTokensTotal >= balance) {
             revert NoTribute();
         }
 
-        /// @dev Withdraw the fees to the Guardian address
-        uint256 tribute = stakedTokensTotal - withdrawableTokensTotal;
-        IERC20(STAKING_TOKEN).transfer(GUARDIAN, tribute);
+        /// @dev Withdraw tributes to the Guardian address
+        uint256 tribute = balance - withdrawableTokensTotal;
+        IERC20(STAKING_TOKEN).transfer(msg.sender, tribute);
     }
 
     // ============================================
@@ -301,8 +345,8 @@ contract CoreV0 is ReentrancyGuard {
             reservedRewardsTotal;
     }
 
-    /// @notice Display the potential rewards a user can get from staking or increasing a stake
-    /// @dev Calculate staking rewards for a new stake and the extension of an old stake
+    /// @notice Calculate the potential rewards a user can get from staking or increasing a stake
+    /// @dev Calculate staking rewards for a new stake and the simultaneous extension of an old stake
     /// @return rewards The amount of PSM reserved for this stake
     function getRewardsOnStaking(
         address _user,
@@ -324,9 +368,10 @@ contract CoreV0 is ReentrancyGuard {
         }
 
         /// @dev Calculate the extended duration on the existing stake
-        /// @dev Known edge case: users cannot add a stake with max Duration if their existing stake has matured already
+        /// @dev Known edge case: users cannot add a stake at max Duration if their existing stake has matured already
         /// @dev Possible stake durations will decline until adding a stake becomes impossible after 2 * MAX_STAKE_DURATION
-        /// @dev This can be avoided by unstaking and restaking or by staking 1 WEI before performing the intended stake
+        /// @dev This can be avoided by unstaking and restaking the matured stake
+        /// @dev It can also be mitigated by staking 1 WEI for 1 second before performing the intended stake
         uint256 extendedDuration = (userStake.stakeEndTime == 0)
             ? 0
             : endTime - userStake.stakeEndTime;

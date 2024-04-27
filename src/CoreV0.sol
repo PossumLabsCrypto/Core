@@ -54,16 +54,14 @@ contract CoreV0 is ReentrancyGuard {
     // ==            GLOBAL VARIABLES            ==
     // ============================================
     using SafeERC20 for IERC20;
+
     uint256 private immutable PSM_IN_LP;
     uint256 private immutable LP_TOTAL_SUPPLY;
     uint256 private constant SECONDS_PER_YEAR = 31536000;
 
-    address public constant GUARDIAN =
-        0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
-    address public constant PSM_ADDRESS =
-        0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;
-    address public constant STAKING_TOKEN =
-        0x8BfAa6260FF474536f2f76EFdB4A2A782f98C798;
+    address public constant GUARDIAN = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
+    address public constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;
+    address public constant STAKING_TOKEN = 0x8BfAa6260FF474536f2f76EFdB4A2A782f98C798;
 
     uint256 public constant TRIBUTE_PERCENT = 5;
     uint256 public constant MAX_STAKE_DURATION = 31536000;
@@ -91,16 +89,8 @@ contract CoreV0 is ReentrancyGuard {
     // ==                EVENTS                  ==
     // ============================================
     event Staked(address indexed user, uint256 amount);
-    event Unstaked(
-        address indexed user,
-        uint256 amount,
-        uint256 rewardsClaimed
-    );
-    event IncentivesDistributed(
-        address indexed user,
-        address indexed destination,
-        uint256 amount
-    );
+    event Unstaked(address indexed user, uint256 amount, uint256 rewardsClaimed);
+    event IncentivesDistributed(address indexed user, address indexed destination, uint256 amount);
 
     event WhitelistUpdated(address indexed destination, bool listed);
 
@@ -126,11 +116,7 @@ contract CoreV0 is ReentrancyGuard {
     /// @param _amount The amount of LP tokens staked
     /// @param _duration The number of seconds until rewards can be claimed upon unstaking
     /// @param _minRewards The minimum number of (additional) PSM rewards
-    function stake(
-        uint256 _amount,
-        uint256 _duration,
-        uint256 _minRewards
-    ) external nonReentrant {
+    function stake(uint256 _amount, uint256 _duration, uint256 _minRewards) external nonReentrant {
         /// @dev Check that the amount is valid
         if (_amount == 0) {
             revert InvalidAmount();
@@ -156,11 +142,7 @@ contract CoreV0 is ReentrancyGuard {
         reservedRewardsTotal += rewards;
 
         /// @dev Transfer tokens to contract
-        IERC20(STAKING_TOKEN).safeTransferFrom(
-            msg.sender,
-            address(this),
-            _amount
-        );
+        IERC20(STAKING_TOKEN).safeTransferFrom(msg.sender, address(this), _amount);
 
         /// @dev Emit the event with updated stake information
         emit Staked(msg.sender, _amount);
@@ -180,8 +162,7 @@ contract CoreV0 is ReentrancyGuard {
         }
 
         /// @dev Calculate withdrawable LP tokens to user
-        uint256 withdrawable = (userStake.stakedBalance *
-            (100 - TRIBUTE_PERCENT)) / 100;
+        uint256 withdrawable = (userStake.stakedBalance * (100 - TRIBUTE_PERCENT)) / 100;
 
         /// @dev Update global stake trackers
         stakedTokensTotal -= userStake.stakedBalance;
@@ -195,21 +176,14 @@ contract CoreV0 is ReentrancyGuard {
         /// @dev If duration has not passed, rewards become available in the contract again
         uint256 time = block.timestamp;
         if (time >= userStake.stakeEndTime) {
-            IERC20(PSM_ADDRESS).safeTransfer(
-                msg.sender,
-                userStake.reservedRewards
-            );
+            IERC20(PSM_ADDRESS).safeTransfer(msg.sender, userStake.reservedRewards);
         }
 
         /// @dev Return withdrawable stake to user
         IERC20(STAKING_TOKEN).safeTransfer(msg.sender, withdrawable);
 
         /// @dev Emit event that a stake was withdrawn and rewards claimed
-        emit Unstaked(
-            msg.sender,
-            userStake.stakedBalance,
-            userStake.reservedRewards
-        );
+        emit Unstaked(msg.sender, userStake.stakedBalance, userStake.reservedRewards);
     }
 
     // ============================================
@@ -219,10 +193,7 @@ contract CoreV0 is ReentrancyGuard {
     /// @dev If sufficient PSM is available, proceed to distribute the amount to a whitelisted address
     /// @dev Increase the governance level of the user according to distributed rewards
     /// @dev Update the global tracker of distributed rewards
-    function distributeIncentives(
-        address _destination,
-        uint256 _amount
-    ) external nonReentrant {
+    function distributeIncentives(address _destination, uint256 _amount) external nonReentrant {
         /// @dev Check that the destination is valid
         if (!whitelist[_destination]) {
             revert InvalidAddress();
@@ -248,22 +219,16 @@ contract CoreV0 is ReentrancyGuard {
         _stake.incentivesDistributed += _amount;
 
         /// @dev Check if saved incentives must be deducted
-        uint256 floatingIncentives = availableIncentives -
-            _stake.savedIncentives;
-        uint256 deductible = (floatingIncentives < _amount)
-            ? _amount - floatingIncentives
-            : 0;
+        uint256 floatingIncentives = availableIncentives - _stake.savedIncentives;
+        uint256 deductible = (floatingIncentives < _amount) ? _amount - floatingIncentives : 0;
         _stake.savedIncentives -= deductible;
 
         /// @dev Update user governance level
         /// @dev Staked value is normed to the LP value in PSM at deployment of this contract, not real time
         /// @dev Active participants can gain roughly 200 levels in the first year (exponential growth)
-        uint256 stakedValue = (2 * PSM_IN_LP * _stake.stakedBalance) /
-            LP_TOTAL_SUPPLY;
+        uint256 stakedValue = (2 * PSM_IN_LP * _stake.stakedBalance) / LP_TOTAL_SUPPLY;
 
-        userLevels[msg.sender] =
-            (_stake.incentivesDistributed * 630) /
-            stakedValue;
+        userLevels[msg.sender] = (_stake.incentivesDistributed * 630) / stakedValue;
 
         /// @dev Update global tracker of distributed incentives
         distributedIncentives += _amount;
@@ -282,11 +247,7 @@ contract CoreV0 is ReentrancyGuard {
     /// @dev The function transfers a non-essential token from the contract to the Guardian
     /// @param _token The address of the token to recycle
     function recoverToken(address _token) external onlyGuardian {
-        if (
-            _token == STAKING_TOKEN ||
-            _token == PSM_ADDRESS ||
-            _token == address(0)
-        ) {
+        if (_token == STAKING_TOKEN || _token == PSM_ADDRESS || _token == address(0)) {
             revert InvalidAddress();
         }
 
@@ -301,10 +262,7 @@ contract CoreV0 is ReentrancyGuard {
     /// @notice Add or remove an address from the whitelist
     /// @dev Allow the Guardian to update the whitelist mapping
     /// @param _destination The address added or removed from the whitelist
-    function updateWhitelist(
-        address _destination,
-        bool _listed
-    ) external onlyGuardian {
+    function updateWhitelist(address _destination, bool _listed) external onlyGuardian {
         if (_destination == address(0)) {
             revert InvalidAddress();
         }
@@ -335,24 +293,18 @@ contract CoreV0 is ReentrancyGuard {
     /// @notice Return the number of available PSM rewards for new stakes
     /// @dev Return the available PSM rewards for new stakes
     /// @return availableRewards The rewards that can be reserved by new stakes
-    function getAvailableRewards()
-        public
-        view
-        returns (uint256 availableRewards)
-    {
-        availableRewards =
-            IERC20(PSM_ADDRESS).balanceOf(address(this)) -
-            reservedRewardsTotal;
+    function getAvailableRewards() public view returns (uint256 availableRewards) {
+        availableRewards = IERC20(PSM_ADDRESS).balanceOf(address(this)) - reservedRewardsTotal;
     }
 
     /// @notice Calculate the potential rewards a user can get from staking or increasing a stake
     /// @dev Calculate staking rewards for a new stake and the simultaneous extension of an old stake
     /// @return rewards The amount of PSM reserved for this stake
-    function getRewardsOnStaking(
-        address _user,
-        uint256 _amount,
-        uint256 _duration
-    ) public view returns (uint256 rewards) {
+    function getRewardsOnStaking(address _user, uint256 _amount, uint256 _duration)
+        public
+        view
+        returns (uint256 rewards)
+    {
         /// @dev Ensure that duration is valid
         if (_duration > MAX_STAKE_DURATION) {
             revert DurationTooLong();
@@ -372,9 +324,7 @@ contract CoreV0 is ReentrancyGuard {
         /// @dev Possible stake durations will decline until adding a stake becomes impossible after 2 * MAX_STAKE_DURATION
         /// @dev This can be avoided by unstaking and restaking the matured stake
         /// @dev It can also be mitigated by staking 1 WEI for 1 second before performing the intended stake
-        uint256 extendedDuration = (userStake.stakeEndTime == 0)
-            ? 0
-            : endTime - userStake.stakeEndTime;
+        uint256 extendedDuration = (userStake.stakeEndTime == 0) ? 0 : endTime - userStake.stakeEndTime;
 
         /// @dev Ensure that extending the duration of the existing stake is within the duration limits
         if (extendedDuration > MAX_STAKE_DURATION) {
@@ -382,18 +332,11 @@ contract CoreV0 is ReentrancyGuard {
         }
 
         /// @dev reward APR increases linear with stake duration, hence rewards increase exponential
-        uint256 rewards_newStake = (_amount *
-            (2 * PSM_IN_LP) *
-            MAX_APR *
-            _duration ** 2) /
-            (LP_TOTAL_SUPPLY * 100 * MAX_STAKE_DURATION * SECONDS_PER_YEAR);
+        uint256 rewards_newStake = (_amount * (2 * PSM_IN_LP) * MAX_APR * _duration ** 2)
+            / (LP_TOTAL_SUPPLY * 100 * MAX_STAKE_DURATION * SECONDS_PER_YEAR);
 
-        uint256 rewards_oldStake = (userStake.stakedBalance *
-            2 *
-            PSM_IN_LP *
-            MAX_APR *
-            extendedDuration ** 2) /
-            (LP_TOTAL_SUPPLY * 100 * MAX_STAKE_DURATION * SECONDS_PER_YEAR);
+        uint256 rewards_oldStake = (userStake.stakedBalance * 2 * PSM_IN_LP * MAX_APR * extendedDuration ** 2)
+            / (LP_TOTAL_SUPPLY * 100 * MAX_STAKE_DURATION * SECONDS_PER_YEAR);
 
         rewards = rewards_newStake + rewards_oldStake;
 
@@ -407,9 +350,7 @@ contract CoreV0 is ReentrancyGuard {
     /// @notice Return the amount of PSM that the user can distribute as incentives
     /// @dev Return the amount of PSM that the user can distribute as incentives
     /// @return availableIncentives The PSM that can be distributed by the user
-    function getUserAvailableIncentives(
-        address _user
-    ) public view returns (uint256 availableIncentives) {
+    function getUserAvailableIncentives(address _user) public view returns (uint256 availableIncentives) {
         /// @dev Input validation
         if (_user == address(0)) {
             revert InvalidAddress();
@@ -422,16 +363,13 @@ contract CoreV0 is ReentrancyGuard {
         /// @dev Level 100 users can distribute roughly 31% of their staked value per year in incentives
         /// @dev Staked value is normed to the LP value in PSM at deployment of this contract, not real time
         uint256 level = (userLevels[_user] > 100) ? userLevels[_user] : 100;
-        uint256 stakedValue = (2 * PSM_IN_LP * userStake.stakedBalance) /
-            LP_TOTAL_SUPPLY;
+        uint256 stakedValue = (2 * PSM_IN_LP * userStake.stakedBalance) / LP_TOTAL_SUPPLY;
         uint256 accrualRate = (stakedValue * level) / 1e10;
         uint256 timePassed = userStake.lastDistributionTime - block.timestamp;
 
         /// @dev check if the user has an active stake and calculate available incentives
         if (userStake.lastDistributionTime > 0) {
-            availableIncentives =
-                userStake.savedIncentives +
-                (timePassed * accrualRate);
+            availableIncentives = userStake.savedIncentives + (timePassed * accrualRate);
         }
     }
 }

@@ -50,7 +50,7 @@ contract PossumCore is ReentrancyGuard {
 
     address private constant PERMANENT_I = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33; // PSM Treasury
     address private constant PERMANENT_II = 0x24b7d3034C711497c81ed5f70BEE2280907Ea1Fa; // HLP Portal
-    // address private constant PERMANENT_III = ; // V2 Portal LP
+    address private constant PERMANENT_III = 0x212Bbd56F6D4F999B2845adebd8cec147851E383; // PortalsV2 VirtualLP
 
     uint256 public constant MAX_STAKE_DURATION = 31536000;
     uint256 public constant MAX_APR = 7000; // Accrual rate of GP at maximum stake duration (10000 = 100%)
@@ -318,7 +318,9 @@ contract PossumCore is ReentrancyGuard {
         }
 
         /// @dev Prevent updating the status of unchangeable destinations
-        if (_destination == PERMANENT_I || _destination == PERMANENT_II) revert PermanentDestination();
+        if (_destination == PERMANENT_I || _destination == PERMANENT_II || _destination == PERMANENT_III) {
+            revert PermanentDestination();
+        }
 
         whitelist[_destination] = _listed;
 

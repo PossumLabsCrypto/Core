@@ -25,19 +25,23 @@ error PermanentDestination();
 /// @title Possum Core
 /// @author Possum Labs
 /// @notice This governance contract allows PSM stakers to collectively control incentive distributions and be rewarded
-/* Users make a committment to stake for a chosen duration upon staking
+/* Users make a committment to stake PSM for a chosen duration upon staking
 /* The longer the chosen duration, the higher the Core Fragments (CF) accrual APR
 /* CF can be spent to distribute PSM incentives to allowed addresses that are listed by the Guardian
-/* Every 1 CF spent provides 1 PSM in rewards to the user
+/* Every 1 CF spent provides 1 PSM in rewards to the staker
 /* The CF accrual APR is applied to the combined balance of staked PSM and earned rewards which enables compounding
 /* Staked PSM can be unstaked anytime irrespective of the chosen stake duration
 /* If a stake is withdrawn before the stake duration passed, all accumulated rewards are forfeited
-/* If users unstake after the stake expired, they get their stake and all accrued rewards
+/* If users unstake after the stake expired, they receive their original stake and all accrued rewards
 /* Users can add more PSM to their existing stake but must stake at least as long as the remaining stake duration
-/* Users can remain staked and accrue CF after their stake duration has passed
+/* Users can remain staked to accrue CF and compound rewards after their stake duration has passed
 */
 contract PossumCore is ReentrancyGuard {
-    constructor() {}
+    constructor() {
+        whitelist[PERMANENT_I] = true;
+        whitelist[PERMANENT_II] = true;
+        whitelist[PERMANENT_III] = true;
+    }
 
     // ============================================
     // ==            GLOBAL VARIABLES            ==
@@ -58,19 +62,20 @@ contract PossumCore is ReentrancyGuard {
     uint256 private constant APR_SCALING = 10000;
 
     uint256 public stakedTokensTotal; // The PSM tokens users have staked
-    uint256 public reservedRewardsTotal; // Amount of PSM reserved for all stakers
-    uint256 public distributed_PSM; // Amount of PSM distributed to allowed addresses
+    uint256 public reservedRewardsTotal; // Amount of PSM reserved for all stakers (info only)
+    uint256 public distributed_PSM; // Amount of PSM distributed to allowed addresses (info only)
 
     struct Stake {
         uint256 stakedBalance;
         uint256 stakeEndTime;
         uint256 reservedRewards;
-        uint256 savedCoreFragments;
+        uint256 storedCoreFragments;
         uint256 lastDistributionTime;
         uint256 CoreFragmentsAPR;
     }
 
     mapping(address user => Stake) public stakes; // associate users with their stake
+    mapping(address user => uint256 distributedCF) public fragmentsDistributed; // CF sent to destinations (info only)
     mapping(address destination => bool allowed) public whitelist; // addresses that can receive PSM incentives
 
     // ============================================
@@ -95,12 +100,12 @@ contract PossumCore is ReentrancyGuard {
     // ============================================
     // ==           STAKING & UNSTAKING          ==
     // ============================================
-    /// @notice Users stake PSM for a chosen duration to earn Governance Power
-    /// @dev This function allows PSM to be staked to earn GP
+    /// @notice Users stake PSM for a chosen duration to earn Core Fragments
+    /// @dev This function allows PSM to be staked to earn CF
     /// @dev Users can add to their stake at any time which may prolong the stake duration
-    /// @dev New stakes are only accepted if rewards are available
+    /// @dev New stakes are only accepted if PSM are available in the contract
     /// @param _amount The amount of tokens staked
-    /// @param _duration The number of seconds until rewards can be claimed upon unstaking
+    /// @param _duration The number of seconds until rewards can be claimed after unstaking
     function stake(uint256 _amount, uint256 _duration) external nonReentrant {
         /// @dev Check that the amount is valid
         if (_amount == 0) {
@@ -117,25 +122,29 @@ contract PossumCore is ReentrancyGuard {
 
         /// @dev Calculate and update the new stake balance
         uint256 oldStakedBalance = userStake.stakedBalance;
-        userStake.stakedBalance = oldStakedBalance + amount;
 
-        /// @dev Calculate and update the stake end time, using the greater of existing or prolonged end time
+        /// @dev Calculate and cache the stake end time
         uint256 newEndTime = block.timestamp + duration;
         uint256 oldEndTime = userStake.stakeEndTime;
-        userStake.stakeEndTime = (newEndTime > oldEndTime) ? newEndTime : oldEndTime;
 
         /// @dev Ensure that the user stake duration used for calculations is at least the remaining duration
         /// @dev This avoids earning potential being lost when new stakes are added with a low stake duration
         duration = (newEndTime >= oldEndTime) ? duration : oldEndTime - block.timestamp;
 
-        /// @dev Save current Core Fragments of the user & update time
-        userStake.savedCoreFragments = getFragments(msg.sender);
-        userStake.lastDistributionTime = block.timestamp;
+        /// @dev Calculate the current Core Fragments of the user
+        uint256 coreFragments = getFragments(msg.sender);
 
-        /// @dev Update the Core Fragments accrual rate (APR)
+        /// @dev Calculate the new average Core Fragments accrual rate (APR)
         uint256 currentAPR = userStake.CoreFragmentsAPR;
         uint256 earningBalance = oldStakedBalance + userStake.reservedRewards;
-        userStake.CoreFragmentsAPR = _getFragmentsAPR(earningBalance, amount, duration, currentAPR);
+        uint256 fragmentsAPR = _getFragmentsAPR(earningBalance, amount, duration, currentAPR);
+
+        /// @dev Update User stake struct
+        userStake.stakedBalance = oldStakedBalance + amount;
+        userStake.stakeEndTime = (newEndTime > oldEndTime) ? newEndTime : oldEndTime;
+        userStake.storedCoreFragments = coreFragments;
+        userStake.lastDistributionTime = block.timestamp;
+        userStake.CoreFragmentsAPR = fragmentsAPR;
 
         /// @dev Update the global stake information
         stakedTokensTotal += amount;
@@ -166,15 +175,15 @@ contract PossumCore is ReentrancyGuard {
         stakedTokensTotal -= userStake.stakedBalance;
         reservedRewardsTotal -= rewards;
 
-        /// @dev Delete the user stake
-        delete stakes[msg.sender];
-
-        /// @dev Add rewards to the unstaked amount if the stake duration has passed
+        /// @dev If the stake duration has passed, add rewards to the withdrawn amount
         /// @dev If duration has not passed, PSM rewards become available in the contract (forfeited)
         uint256 amount = userStake.stakedBalance;
         if (block.timestamp >= userStake.stakeEndTime) {
             amount += rewards;
         }
+
+        /// @dev Delete the user stake
+        delete stakes[msg.sender];
 
         /// @dev Transfer stake and potential rewards to user
         IERC20(PSM_ADDRESS).transfer(msg.sender, amount);
@@ -186,18 +195,19 @@ contract PossumCore is ReentrancyGuard {
     // ============================================
     // ==        DISTRIBUTE INCENTIVES           ==
     // ============================================
-    /// @notice Users can distribute Core Fragments (PSM) to whitelisted addresses
-    /// @dev Allow stakers to distribute PSM to whitelisted addresses and get rewards in return
+    /// @notice Users can distribute Core Fragments (PSM) to allowed addresses
+    /// @dev Allow stakers to distribute PSM to listed addresses and get rewards in return
     /// @dev Validity checks on inputs and available Core Fragments of the user
     /// @dev Reward the user for distributing Core Fragments with an equal amount
     /// @dev Prioritize rewarding the user if the contract is short on PSM
+    /// @dev Track distributed rewards by the user in mapping (info only for later use)
     function distributeCoreFragments(address _destination, uint256 _amount) external nonReentrant {
         /// @dev Check that the destination is valid
         if (!whitelist[_destination]) {
             revert NotWhitelisted();
         }
 
-        /// @dev Calculate PSM tokens available for distributions and rewards
+        /// @dev Calculate PSM tokens in contract that are available for distributions and rewards
         uint256 availablePSM = getAvailableTokens();
 
         /// @dev Check that PSM tokens are available
@@ -238,9 +248,12 @@ contract PossumCore is ReentrancyGuard {
         }
 
         /// @dev Update user stake data
-        userStake.savedCoreFragments = userFragments;
+        userStake.storedCoreFragments = userFragments;
         userStake.reservedRewards += rewards;
         userStake.lastDistributionTime = block.timestamp;
+
+        /// @dev Update the tracking of distributed fragments by the user
+        fragmentsDistributed[msg.sender] += distributed;
 
         /// @dev Update global tracker of rewards and distributed tokens
         reservedRewardsTotal += rewards;
@@ -264,13 +277,9 @@ contract PossumCore is ReentrancyGuard {
         availableTokens = IERC20(PSM_ADDRESS).balanceOf(address(this)) - stakedTokensTotal - reservedRewardsTotal;
     }
 
-    ///////////// OVERHAUL //////////////////////
-    ////////////////////////////////////////////
-    ///////////////////////////////////////////
-
-    /// @notice Return the amount of Core Fragements (PSM) that the user can distribute as incentives
-    /// @dev Return the total amount of PSM that the user can distribute as incentives
-    /// @return availableFragments The PSM that can be distributed by the user to the whitelist
+    /// @notice Return the amount of Core Fragments that the user can use to distribute incentives
+    /// @dev Return the total amount of CF that the user can use to distribute incentives
+    /// @return availableFragments The CF that can be distributed by the user to the whitelist
     function getFragments(address _user) public view returns (uint256 availableFragments) {
         /// @dev Load user stake into memory
         Stake memory userStake = stakes[_user];
@@ -285,11 +294,12 @@ contract PossumCore is ReentrancyGuard {
         uint256 earningBalance = userStake.stakedBalance + userStake.reservedRewards;
 
         /// @dev Calculate the available Core Fragments of the user
-        availableFragments = userStake.savedCoreFragments
+        availableFragments = userStake.storedCoreFragments
             + (earningBalance * timePassed * userStake.CoreFragmentsAPR) / (APR_SCALING * SECONDS_PER_YEAR);
     }
 
     /// @dev Calculate and return the weighted Core Fragments accrual rate (APR) for compounding stakes
+    /// @dev Rewards accrue CF at the weighted average APR over time
     function _getFragmentsAPR(uint256 _earningBalance, uint256 _newAmount, uint256 _newDuration, uint256 _currentAPR)
         internal
         pure

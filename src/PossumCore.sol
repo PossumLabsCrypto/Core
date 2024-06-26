@@ -57,13 +57,14 @@ contract PossumCore is ReentrancyGuard {
     address private constant PERMANENT_III = 0x212Bbd56F6D4F999B2845adebd8cec147851E383; // PortalsV2 VirtualLP
 
     uint256 public constant MAX_STAKE_DURATION = 31536000;
-    uint256 public constant MAX_APR = 7000; // Accrual rate of GP at maximum stake duration (10000 = 100%)
-    uint256 public constant MIN_APR = 2000; // Accrual rate of GP at stake duration = 0 (10000 = 100%)
+    uint256 public constant MAX_APR = 7000; // Accrual rate of CF at maximum stake duration (10000 = 100%)
+    uint256 public constant MIN_APR = 2000; // Accrual rate of CF at stake duration = 0 (10000 = 100%)
     uint256 private constant APR_SCALING = 10000;
 
-    uint256 public stakedTokensTotal; // The PSM tokens users have staked
+    uint256 public stakedTokensTotal; // The PSM tokens deposited by stakers
     uint256 public reservedRewardsTotal; // Amount of PSM reserved for all stakers (info only)
     uint256 public distributed_PSM; // Amount of PSM distributed to allowed addresses (info only)
+    uint256 public ativeParticipants; // Number of stakers who have done at least 1 distribution (info only)
 
     struct Stake {
         uint256 stakedBalance;
@@ -82,7 +83,8 @@ contract PossumCore is ReentrancyGuard {
     // ==                EVENTS                  ==
     // ============================================
     event Staked(address indexed user, uint256 amount);
-    event Unstaked(address indexed user, uint256 amount, uint256 rewards);
+    event UnstakeAndClaimed(address indexed user, uint256 amountWithdrawn, uint256 rewardsClaimed);
+    event UnstakeAndForfeited(address indexed user, uint256 amountWithdrawn, uint256 rewardsForfeited);
     event CoreFragmentsPosted(address indexed user, address indexed destination, uint256 amount);
 
     event WhitelistUpdated(address indexed destination, bool listed);
@@ -156,40 +158,61 @@ contract PossumCore is ReentrancyGuard {
         emit Staked(msg.sender, amount);
     }
 
-    /// @notice Enable users to withdraw their stake and claim all rewards if the stake is matured
+    /// @notice Enable users to withdraw their stake and claim rewards if the stake is matured
+    /// @notice Allow partial withdrawals which affects the accumulated rewards proportionally
+    /// @dev Update the user stake data
     /// @dev Update global stake data
-    /// @dev Delete the user stake data
-    /// @dev If the stake duration has passed, claim all rewards to user, otherwise forfeit all rewards
-    /// @dev Withdraw the staked amount of LP tokens and rewards if applicable
-    function unstakeAndClaim() external nonReentrant {
-        /// @dev Load user stake data
-        Stake memory userStake = stakes[msg.sender];
+    /// @dev If the stake duration has passed, transfer rewards to user, otherwise forfeit (deduct only)
+    /// @dev Withdraw the amount and proportional rewards if applicable
+    function unstakeAndClaim(uint256 _amount) external nonReentrant {
+        /// @dev Load user stake data & cache variables
+        Stake storage userStake = stakes[msg.sender];
+        uint256 balance = userStake.stakedBalance;
         uint256 rewards = userStake.reservedRewards;
+        uint256 endTime = userStake.stakeEndTime;
+        uint256 amount = (_amount > balance) ? balance : _amount;
+        uint256 affectedRewards = (rewards * amount) / balance;
 
         /// @dev Check that the user has a stake
-        if (userStake.stakedBalance == 0) {
+        if (amount == 0) {
             revert NoStake();
         }
 
-        /// @dev Update global stake & reward trackers
-        stakedTokensTotal -= userStake.stakedBalance;
-        reservedRewardsTotal -= rewards;
+        /// @dev Ensure that staker cannot withdraw without affecting some rewards if accrued
+        /// @dev Prevent circumventing the forfeit logic by withdrawing small amounts & cause rounding
+        if (affectedRewards == 0 && rewards > 0) revert InvalidAmount();
 
-        /// @dev If the stake duration has passed, add rewards to the withdrawn amount
-        /// @dev If duration has not passed, PSM rewards become available in the contract (forfeited)
-        uint256 amount = userStake.stakedBalance;
-        if (block.timestamp >= userStake.stakeEndTime) {
-            amount += rewards;
+        /// @dev Update the user stake
+        /// @dev If full stake was withdrawn, delete the user stake instead
+        balance -= amount;
+        if (balance == 0) {
+            delete stakes[msg.sender];
+        } else {
+            userStake.stakedBalance = balance;
+            userStake.reservedRewards -= affectedRewards;
+            userStake.storedCoreFragments = getFragments(msg.sender);
+            userStake.lastDistributionTime = block.timestamp;
         }
 
-        /// @dev Delete the user stake
-        delete stakes[msg.sender];
+        /// @dev Update global stake & reward trackers
+        stakedTokensTotal -= amount;
+        reservedRewardsTotal -= affectedRewards;
+
+        /// @dev If the stake duration has passed, add rewards to the amount to withdraw
+        /// @dev If duration has not passed, rewards are forfeited and become available to other stakers
+        if (block.timestamp >= endTime) {
+            amount += affectedRewards;
+        }
 
         /// @dev Transfer stake and potential rewards to user
         IERC20(PSM_ADDRESS).transfer(msg.sender, amount);
 
-        /// @dev Emit event that a stake was withdrawn and rewards claimed
-        emit Unstaked(msg.sender, amount, rewards);
+        /// @dev Emit event that a stake was withdrawn and rewards are claimed or forfeited
+        if (block.timestamp >= endTime) {
+            emit UnstakeAndClaimed(msg.sender, amount, affectedRewards);
+        } else {
+            emit UnstakeAndForfeited(msg.sender, amount, affectedRewards);
+        }
     }
 
     // ============================================
@@ -252,7 +275,8 @@ contract PossumCore is ReentrancyGuard {
         userStake.reservedRewards += rewards;
         userStake.lastDistributionTime = block.timestamp;
 
-        /// @dev Update the tracking of distributed fragments by the user
+        /// @dev Update tracking of distributed fragments & active participants
+        if (fragmentsDistributed[msg.sender] == 0) ativeParticipants += 1;
         fragmentsDistributed[msg.sender] += distributed;
 
         /// @dev Update global tracker of rewards and distributed tokens

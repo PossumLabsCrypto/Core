@@ -183,16 +183,10 @@ contract PossumCore is ReentrancyGuard {
         if (affectedRewards == 0 && rewards > 0) revert InvalidAmount();
 
         /// @dev Update the user stake
-        /// @dev If full stake was withdrawn, delete the user stake instead
-        balance -= amount;
-        if (balance == 0) {
-            delete stakes[msg.sender];
-        } else {
-            userStake.stakedBalance = balance;
-            userStake.reservedRewards -= affectedRewards;
-            userStake.storedCoreFragments = getFragments(msg.sender);
-            userStake.lastDistributionTime = block.timestamp;
-        }
+        userStake.stakedBalance -= amount;
+        userStake.reservedRewards -= affectedRewards;
+        userStake.storedCoreFragments = getFragments(msg.sender);
+        userStake.lastDistributionTime = block.timestamp;
 
         /// @dev Update global stake & reward trackers
         stakedTokensTotal -= amount;
@@ -200,18 +194,19 @@ contract PossumCore is ReentrancyGuard {
 
         /// @dev If the stake duration has passed, add rewards to the amount to withdraw
         /// @dev If duration has not passed, rewards are forfeited and become available to other stakers
+        uint256 amountToWithdraw = amount;
         if (block.timestamp >= endTime) {
-            amount += affectedRewards;
+            amountToWithdraw += affectedRewards;
         }
 
         /// @dev Transfer stake and potential rewards to user
-        IERC20(PSM_ADDRESS).transfer(msg.sender, amount);
+        IERC20(PSM_ADDRESS).transfer(msg.sender, amountToWithdraw);
 
         /// @dev Emit event that a stake was withdrawn and rewards are claimed or forfeited
         if (block.timestamp >= endTime) {
-            emit UnstakeAndClaimed(msg.sender, amount, affectedRewards);
+            emit UnstakeAndClaimed(msg.sender, amountToWithdraw, affectedRewards);
         } else {
-            emit UnstakeAndForfeited(msg.sender, amount, affectedRewards);
+            emit UnstakeAndForfeited(msg.sender, amountToWithdraw, affectedRewards);
         }
     }
 

@@ -89,6 +89,22 @@ contract PossumCoreTest is Test {
         coreContract.updateWhitelist(Karen, true);
     }
 
+    function helper_stake_Bob() public {
+        vm.startPrank(Bob);
+        psm.approve(address(coreContract), 1e55);
+
+        coreContract.stake(1e24, SECONDS_PER_YEAR); // stake 1M
+        vm.stopPrank();
+    }
+
+    function helper_stake_Alice() public {
+        vm.startPrank(Alice);
+        psm.approve(address(coreContract), 1e55);
+
+        coreContract.stake(1e18, 0); // stake 1 PSM
+        vm.stopPrank();
+    }
+
     //////////////////////////////////////
     /////// TESTS - Guardian Functions
     //////////////////////////////////////
@@ -123,12 +139,85 @@ contract PossumCoreTest is Test {
     //////////////////////////////////////
     /////// TESTS - Staking & Unstaking
     //////////////////////////////////////
+    function testRevert_stake() public {}
+
+    function testSuccess_stake() public {}
+
+    function testSuccess_stake_sequence() public {}
+
+    function testSuccess_stake_compounding() public {}
+
+    function testRevert_unstakeAndClaim() public {}
+
+    function testSuccess_unstakeAndClaim_forfeit() public {}
+
+    function testSuccess_unstakeAndClaim_claim() public {}
+
+    function testSuccess_unstakeAndClaim_sequence() public {}
 
     //////////////////////////////////////
     /////// TESTS - Distributing
     //////////////////////////////////////
+    function testRevert_distributeCoreFragments() public {}
+
+    function testSuccess_distributeCoreFragments() public {}
 
     //////////////////////////////////////
     /////// TESTS - View Functions
     //////////////////////////////////////
+    function testSuccess_getAvailableTokens() public view {
+        uint256 test = coreContract.getAvailableTokens();
+        uint256 check = IERC20(PSM_ADDRESS).balanceOf(address(this)) - coreContract.stakedTokensTotal()
+            - coreContract.reservedRewardsTotal();
+
+        assertTrue(test == check);
+    }
+
+    function testRevert_getFragments() public {
+        vm.expectRevert(InvalidAddress.selector);
+        coreContract.getFragments(address(0));
+    }
+
+    function testSuccess_getFragments_zero() public view {
+        uint256 fragments = coreContract.getFragments(Bob);
+
+        assertTrue(fragments == 0);
+    }
+
+    function testSuccess_getFragments_staked() public {
+        helper_stake_Bob();
+
+        // verify that fragments start at zero after staking
+        uint256 fragments = coreContract.getFragments(Bob);
+        assertTrue(fragments == 0);
+
+        // pass 10 days and evaluate fragments
+        vm.warp(tenDaysLater);
+        fragments = coreContract.getFragments(Bob);
+        uint256 externValidated = 19726.027397260273972602e18;
+
+        assertTrue(fragments == externValidated);
+
+        // pass 1 second and evaluate fragments
+        vm.warp(tenDaysLater + 1);
+        fragments = coreContract.getFragments(Bob);
+        externValidated = 19726.050228310502283105e18;
+
+        assertTrue(fragments == externValidated);
+    }
+
+    function testSuccess_getFragments_staked_edgeCase() public {
+        helper_stake_Alice();
+
+        // verify that fragments start at zero after staking
+        uint256 fragments = coreContract.getFragments(Alice);
+        assertTrue(fragments == 0);
+
+        // pass 1 second and evaluate fragments
+        vm.warp(block.timestamp + 1);
+        fragments = coreContract.getFragments(Alice);
+        uint256 externValidated = 3805175038;
+
+        assertTrue(fragments == externValidated);
+    }
 }

@@ -57,8 +57,8 @@ contract PossumCore is ReentrancyGuard {
     address private constant PERMANENT_III = 0x212Bbd56F6D4F999B2845adebd8cec147851E383; // PortalsV2 VirtualLP
 
     uint256 public constant MAX_STAKE_DURATION = 31536000;
-    uint256 public constant MAX_APR = 7000; // Accrual rate of CF at maximum stake duration (10000 = 100%)
-    uint256 public constant MIN_APR = 2000; // Accrual rate of CF at stake duration = 0 (10000 = 100%)
+    uint256 public constant MAX_APR = 7200; // Accrual rate of CF at maximum stake duration (10000 = 100%)
+    uint256 public constant MIN_APR = 1200; // Accrual rate of CF at stake duration = 0 (10000 = 100%)
     uint256 private constant APR_SCALING = 10000;
 
     uint256 public stakedTokensTotal; // The PSM tokens deposited by stakers

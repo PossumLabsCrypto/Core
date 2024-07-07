@@ -79,6 +79,10 @@ contract PossumCoreTest is Test {
         vm.deal(Karen, 1 ether);
         vm.prank(psmSender);
         psm.transfer(Karen, psmAmount);
+
+        // Load the Core with tokens
+        vm.prank(psmSender);
+        psm.transfer(address(coreContract), psmAmount);
     }
 
     //////////////////////////////////////
@@ -139,24 +143,129 @@ contract PossumCoreTest is Test {
     //////////////////////////////////////
     /////// TESTS - Staking & Unstaking
     //////////////////////////////////////
-    function testRevert_stake() public {}
+    function testRevert_stake() public {
+        vm.startPrank(Alice);
 
-    function testSuccess_stake() public {}
+        psm.approve(address(coreContract), 1e55);
 
-    function testSuccess_stake_sequence() public {}
+        vm.expectRevert(InvalidAmount.selector);
+        coreContract.stake(0, 0);
 
-    function testSuccess_stake_compounding() public {}
+        uint256 duration = coreContract.MAX_STAKE_DURATION() + 1;
+        vm.expectRevert(InvalidDuration.selector);
+        coreContract.stake(111, duration);
+    }
 
-    function testRevert_unstakeAndClaim() public {}
+    function testSuccess_stake() public {
+        uint256 amount = 1e18;
+        uint256 duration = 60 * 60 * 24 * 14; // 14 days
 
-    function testSuccess_unstakeAndClaim_forfeit() public {}
+        vm.startPrank(Alice);
+        psm.approve(address(coreContract), 1e55);
+        coreContract.stake(amount, duration);
+        vm.stopPrank();
 
-    function testSuccess_unstakeAndClaim_claim() public {}
+        uint256 contractBalance = psm.balanceOf(address(coreContract));
+        uint256 availablePSM = coreContract.getAvailableTokens();
 
-    function testSuccess_unstakeAndClaim_sequence() public {}
+        (uint256 stakeAmount, uint256 stakeEndTime,,, uint256 lastDistributionTime, uint256 CoreFragmentsAPR) =
+            coreContract.stakes(Alice);
+        uint256 checkAPR = coreContract.MIN_APR()
+            + ((coreContract.MAX_APR() - coreContract.MIN_APR()) * duration) / coreContract.MAX_STAKE_DURATION();
+
+        assertEq(contractBalance, psmAmount + amount);
+        assertEq(availablePSM, psmAmount);
+        assertEq(stakeAmount, amount);
+        assertEq(stakeEndTime, block.timestamp + duration);
+        assertEq(lastDistributionTime, block.timestamp);
+        assertEq(CoreFragmentsAPR, checkAPR);
+    }
+
+    function testSuccess_stake_sequence() public {
+        helper_stake_Bob();
+
+        uint256 amount = 1e24;
+        uint256 duration = coreContract.MAX_STAKE_DURATION();
+
+        // skip half the staking time
+        uint256 timePassed = duration / 2;
+        uint256 later = block.timestamp + timePassed;
+        vm.warp(later);
+
+        uint256 fragmentsSaved = coreContract.getFragments(Bob);
+
+        // stake a second time but don´t prolong staking end time
+        vm.prank(Bob);
+        coreContract.stake(amount / 2, timePassed);
+
+        (
+            uint256 stakeBalance,
+            uint256 stakeEndTime,
+            uint256 reservedRewards,
+            uint256 storedCoreFragments,
+            uint256 lastDistributionTime,
+            uint256 coreFragmentsAPR
+        ) = coreContract.stakes(Bob);
+
+        uint256 stakeSum = amount + amount / 2;
+
+        uint256 checkAPR = 6200;
+        uint256 contractBalanceCheck = psmAmount + stakeSum;
+        uint256 availablePSM = coreContract.getAvailableTokens();
+
+        assertEq(psm.balanceOf(address(coreContract)), contractBalanceCheck);
+        assertEq(availablePSM, psmAmount);
+
+        assertEq(stakeBalance, stakeSum);
+        assertEq(reservedRewards, 0);
+        assertEq(storedCoreFragments, fragmentsSaved);
+        assertEq(stakeEndTime, block.timestamp + timePassed);
+        assertEq(lastDistributionTime, block.timestamp);
+        assertEq(coreFragmentsAPR, checkAPR);
+    }
+
+    function testSuccess_stake_compounding() public {
+        // helper_stake_Bob();
+
+        // uint256 amount = 1e24;
+        // uint256 duration = coreContract.MAX_STAKE_DURATION();
+    }
+
+    function testRevert_unstakeAndClaim() public {
+        helper_stake_Bob();
+
+        uint256 amountStaked = 1e24;
+        uint256 amountUnstake = 1e23;
+        uint256 duration = coreContract.MAX_STAKE_DURATION();
+
+        // skip half the staking time
+        uint256 timePassed = duration / 2;
+        uint256 later = block.timestamp + timePassed;
+        vm.warp(later);
+
+        uint256 fragmentsSaved = coreContract.getFragments(Bob);
+
+        vm.prank(Bob);
+        coreContract.unstakeAndClaim(amountUnstake);
+
+        (uint256 stakeBalance,,, uint256 storedCoreFragments, uint256 lastDistributionTime,) = coreContract.stakes(Bob);
+
+        uint256 contractBalanceCheck = psmAmount + amountStaked - amountUnstake;
+        uint256 availablePSM = coreContract.getAvailableTokens();
+
+        assertEq(psm.balanceOf(address(coreContract)), contractBalanceCheck);
+        assertEq(availablePSM, psmAmount);
+        assertEq(stakeBalance, amountStaked - amountUnstake);
+        assertEq(storedCoreFragments, fragmentsSaved);
+        assertEq(lastDistributionTime, block.timestamp);
+    }
+
+    function testSuccess_unstakeAndClaim_forfeit_partial() public {}
+
+    function testSuccess_unstakeAndClaim_claim_partial() public {}
 
     //////////////////////////////////////
-    /////// TESTS - Distributing
+    /////// TESTS - Distribution
     //////////////////////////////////////
     function testRevert_distributeCoreFragments() public {}
 
@@ -167,7 +276,7 @@ contract PossumCoreTest is Test {
     //////////////////////////////////////
     function testSuccess_getAvailableTokens() public view {
         uint256 test = coreContract.getAvailableTokens();
-        uint256 check = IERC20(PSM_ADDRESS).balanceOf(address(this)) - coreContract.stakedTokensTotal()
+        uint256 check = IERC20(PSM_ADDRESS).balanceOf(address(coreContract)) - coreContract.stakedTokensTotal()
             - coreContract.reservedRewardsTotal();
 
         assertTrue(test == check);

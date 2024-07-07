@@ -179,13 +179,14 @@ contract PossumCore is ReentrancyGuard {
         }
 
         /// @dev Ensure that staker cannot withdraw without affecting some rewards if accrued
-        /// @dev Prevent circumventing the forfeit logic by withdrawing small amounts & cause rounding
+        /// @dev Prevent circumventing the forfeit logic by withdrawing small amounts & cause rounding to 0
         if (affectedRewards == 0 && rewards > 0) revert InvalidAmount();
 
         /// @dev Update the user stake
+        uint256 fragments = getFragments(msg.sender);
         userStake.stakedBalance -= amount;
         userStake.reservedRewards -= affectedRewards;
-        userStake.storedCoreFragments = getFragments(msg.sender);
+        userStake.storedCoreFragments = fragments;
         userStake.lastDistributionTime = block.timestamp;
 
         /// @dev Update global stake & reward trackers

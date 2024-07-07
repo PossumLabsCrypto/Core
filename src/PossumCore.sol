@@ -62,7 +62,7 @@ contract PossumCore is ReentrancyGuard {
     uint256 private constant APR_SCALING = 10000;
 
     uint256 public stakedTokensTotal; // The PSM tokens deposited by stakers
-    uint256 public reservedRewardsTotal; // Amount of PSM reserved for all stakers (info only)
+    uint256 public reservedRewardsTotal; // Amount of PSM reserved for all stakers
     uint256 public distributed_PSM; // Amount of PSM distributed to allowed addresses (info only)
     uint256 public ativeParticipants; // Number of stakers who have done at least 1 distribution (info only)
 
@@ -171,6 +171,7 @@ contract PossumCore is ReentrancyGuard {
         uint256 rewards = userStake.reservedRewards;
         uint256 endTime = userStake.stakeEndTime;
         uint256 amount = (_amount > balance) ? balance : _amount;
+        if (balance == 0) revert InvalidAmount();
         uint256 affectedRewards = (rewards * amount) / balance;
 
         /// @dev Check that the user has a stake

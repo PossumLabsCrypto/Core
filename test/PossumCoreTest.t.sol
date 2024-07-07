@@ -20,7 +20,7 @@ error PermanentDestination();
 
 contract PossumCoreTest is Test {
     uint256 private constant SECONDS_PER_YEAR = 31536000;
-    address private constant GUARDIAN = 0xa0BFD02a7a47CBCA7230E03fbf04A196C3E771E3;
+    address private constant GUARDIAN = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33;
     address private constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;
 
     address private constant PERMANENT_I = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33; // PSM Treasury
@@ -154,6 +154,21 @@ contract PossumCoreTest is Test {
         uint256 duration = coreContract.MAX_STAKE_DURATION() + 1;
         vm.expectRevert(InvalidDuration.selector);
         coreContract.stake(111, duration);
+        vm.stopPrank();
+
+        helper_stake_Bob();
+
+        uint256 timeForward = 60 * 60 * 24 * 365 * 100 + block.timestamp;
+        vm.warp(timeForward);
+
+        uint256 fragments = coreContract.getFragments(Bob);
+
+        vm.prank(Bob);
+        coreContract.distributeCoreFragments(PERMANENT_I, fragments);
+
+        vm.prank(Alice);
+        vm.expectRevert(InsufficientRewards.selector);
+        coreContract.stake(1e18, MAX_STAKE_DURATION);
     }
 
     function testSuccess_stake() public {

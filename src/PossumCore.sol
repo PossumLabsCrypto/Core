@@ -9,9 +9,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 // ============================================
 // ==              CUSTOM ERRORS             ==
 // ============================================
-error DurationNotPassed();
-error DurationTooLong();
-error DurationTooShort();
 error InsufficientRewards();
 error InvalidAddress();
 error InvalidAmount();
@@ -25,16 +22,17 @@ error PermanentDestination();
 /// @title Possum Core
 /// @author Possum Labs
 /// @notice This governance contract allows PSM stakers to collectively control incentive distributions and be rewarded
-/* Users make a committment to stake PSM for a chosen duration upon staking
-/* The longer the chosen duration, the higher the Core Fragments (CF) accrual APR
+/* Users make a committment to stake PSM at least for a chosen duration upon staking
+/* The longer the commitment period, the higher the Core Fragments (CF) accrual APR
 /* CF can be spent to distribute PSM incentives to allowed addresses that are listed by the Guardian
+/* The Guardian can list and delist addresses. There are 3 permanent addresses that cannot be delisted.
 /* Every 1 CF spent provides 1 PSM in rewards to the staker
 /* The CF accrual APR is applied to the combined balance of staked PSM and earned rewards which enables compounding
 /* Staked PSM can be unstaked anytime irrespective of the chosen stake duration
-/* If a stake is withdrawn before the stake duration passed, all accumulated rewards are forfeited
+/* If a stake is withdrawn before the stake duration passed, accumulated rewards are forfeited proportionally
 /* If users unstake after the stake expired, they receive their original stake and all accrued rewards
-/* Users can add more PSM to their existing stake but must stake at least as long as the remaining stake duration
-/* Users can remain staked to accrue CF and compound rewards after their stake duration has passed
+/* Users can add more PSM to their existing stake but must stake at least as long as the remaining commitment period
+/* Users can remain staked to accrue CF and compound rewards after their commitment period has passed
 */
 contract PossumCore is ReentrancyGuard {
     constructor() {
@@ -49,7 +47,7 @@ contract PossumCore is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 private constant SECONDS_PER_YEAR = 31536000;
-    address private constant GUARDIAN = 0xa0BFD02a7a47CBCA7230E03fbf04A196C3E771E3;
+    address private constant GUARDIAN = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33; // PSM multi-sig
     address private constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;
 
     address private constant PERMANENT_I = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33; // PSM Treasury
@@ -117,6 +115,10 @@ contract PossumCore is ReentrancyGuard {
         /// @dev Check that the duration is valid
         if (_duration > MAX_STAKE_DURATION) revert InvalidDuration();
 
+        /// @dev Check that PSM is available
+        uint256 availablePSM = getAvailableTokens();
+        if (availablePSM == 0) revert InsufficientRewards();
+
         /// @dev Cache variables
         uint256 duration = _duration;
         uint256 amount = _amount;
@@ -162,7 +164,7 @@ contract PossumCore is ReentrancyGuard {
     /// @notice Allow partial withdrawals which affects the accumulated rewards proportionally
     /// @dev Update the user stake data
     /// @dev Update global stake data
-    /// @dev If the stake duration has passed, transfer rewards to user, otherwise forfeit (deduct only)
+    /// @dev If the stake duration has passed, transfer rewards to user, otherwise forfeit (back to contract)
     /// @dev Withdraw the amount and proportional rewards if applicable
     function unstakeAndClaim(uint256 _amount) external nonReentrant {
         /// @dev Load user stake data & cache variables
@@ -218,7 +220,7 @@ contract PossumCore is ReentrancyGuard {
     /// @notice Users can distribute Core Fragments (PSM) to allowed addresses
     /// @dev Allow stakers to distribute PSM to listed addresses and get rewards in return
     /// @dev Validity checks on inputs and available Core Fragments of the user
-    /// @dev Reward the user for distributing Core Fragments with an equal amount
+    /// @dev Reward the user for distributing Core Fragments with an equal amount of PSM
     /// @dev Prioritize rewarding the user if the contract is short on PSM
     /// @dev Track distributed rewards by the user in mapping (info only for later use)
     function distributeCoreFragments(address _destination, uint256 _amount) external nonReentrant {
@@ -293,13 +295,13 @@ contract PossumCore is ReentrancyGuard {
     // ==            VIEW FUNCTIONS              ==
     // ============================================
     /// @notice Return the number of available PSM for distribution & rewards
-    /// @return availableTokens PSM amount that can be distributed or reserved as rewards
+    /// @return availableTokens is the PSM amount that can be distributed or reserved as rewards
     function getAvailableTokens() public view returns (uint256 availableTokens) {
         availableTokens = IERC20(PSM_ADDRESS).balanceOf(address(this)) - stakedTokensTotal - reservedRewardsTotal;
     }
 
-    /// @notice Return the amount of Core Fragments that the user can use to distribute incentives
-    /// @dev Return the total amount of CF that the user can use to distribute incentives
+    /// @notice Return the amount of Core Fragments that the user can distribute
+    /// @dev Return the total amount of CF that the user can distribute
     /// @return availableFragments The CF that can be distributed by the user to the whitelist
     function getFragments(address _user) public view returns (uint256 availableFragments) {
         /// @dev Load user stake into memory
@@ -320,7 +322,7 @@ contract PossumCore is ReentrancyGuard {
     }
 
     /// @dev Calculate and return the weighted Core Fragments accrual rate (APR) for compounding stakes
-    /// @dev Rewards accrue CF at the weighted average APR over time
+    /// @dev CF accrue at the weighted average APR over time
     function _getFragmentsAPR(uint256 _earningBalance, uint256 _newAmount, uint256 _newDuration, uint256 _currentAPR)
         internal
         pure

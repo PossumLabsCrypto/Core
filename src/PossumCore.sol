@@ -100,15 +100,11 @@ contract PossumCore is ReentrancyGuard {
     /// @notice Users stake PSM for a chosen duration to earn Core Fragments
     /// @dev This function allows PSM to be staked to earn CF
     /// @dev Users can add to their stake at any time which may prolong the stake duration
+    /// @dev Users can also extend their commitment period without staking additional PSM
     /// @dev New stakes are only accepted if PSM are available in the contract
     /// @param _amount The amount of tokens staked
     /// @param _duration The number of seconds until rewards can be claimed after unstaking
     function stake(uint256 _amount, uint256 _duration) external nonReentrant {
-        /// @dev Check that the amount is valid
-        if (_amount == 0) {
-            revert InvalidAmount();
-        }
-
         /// @dev Check that the duration is valid
         if (_duration > MAX_STAKE_DURATION) revert InvalidDuration();
 
@@ -127,6 +123,11 @@ contract PossumCore is ReentrancyGuard {
         /// @dev Calculate and cache the stake end time
         uint256 newEndTime = block.timestamp + duration;
         uint256 oldEndTime = userStake.stakeEndTime;
+
+        /// @dev Check that the duration is valid when only extending the commitment period
+        if (_amount == 0 && newEndTime <= oldEndTime) {
+            revert InvalidDuration();
+        }
 
         /// @dev Ensure that the user stake duration used for calculations is at least the remaining duration
         /// @dev This avoids earning potential being lost when new stakes are added with a low stake duration

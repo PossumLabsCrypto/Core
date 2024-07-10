@@ -3,7 +3,6 @@ pragma solidity =0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 // ============================================
@@ -44,8 +43,6 @@ contract PossumCore is ReentrancyGuard {
     // ============================================
     // ==            GLOBAL VARIABLES            ==
     // ============================================
-    using SafeERC20 for IERC20;
-
     uint256 private constant SECONDS_PER_YEAR = 31536000;
     address private constant GUARDIAN = 0xAb845D09933f52af5642FC87Dd8FBbf553fd7B33; // PSM multi-sig
     address private constant PSM_ADDRESS = 0x17A8541B82BF67e10B0874284b4Ae66858cb1fd5;

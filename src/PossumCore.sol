@@ -335,7 +335,9 @@ contract PossumCore is ReentrancyGuard {
         uint256 oldStakeWeight = _currentAPR * _earningBalance;
 
         /// @dev Calculate weighted average of both APRs
+        /// @dev Ensure users are not negatively affected by past low APRs when extending the lock
         fragmentsAPR = (newStakeWeight + oldStakeWeight) / (_newAmount + _earningBalance);
+        fragmentsAPR = (fragmentsAPR > newAPR) ? fragmentsAPR : newAPR;
     }
 
     // ============================================

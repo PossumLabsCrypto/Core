@@ -128,6 +128,14 @@ contract PossumCore is ReentrancyGuard {
         uint256 newEndTime = block.timestamp + duration;
         uint256 oldEndTime = userStake.stakeEndTime;
 
+        /// @dev Convert reserved rewards into staked tokens if the commitment period has passed already
+        if (oldEndTime <= block.timestamp) {
+            userStake.stakedBalance += userStake.reservedRewards;
+            reservedRewardsTotal -= userStake.reservedRewards;
+            stakedTokensTotal += userStake.reservedRewards;
+            userStake.reservedRewards = 0;
+        }
+
         /// @dev Ensure that the user stake duration used for calculations is at least the remaining duration
         /// @dev This avoids earning potential being lost when new stakes are added with a low stake duration
         duration = (newEndTime >= oldEndTime) ? duration : oldEndTime - block.timestamp;

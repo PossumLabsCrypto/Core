@@ -188,6 +188,8 @@ contract PossumCore is ReentrancyGuard {
         userStake.reservedRewards -= affectedRewards;
         userStake.storedCoreFragments = fragments;
         userStake.lastDistributionTime = block.timestamp;
+        /// @dev reset the stake end time if the user withdraws all to not conflict with new stakes
+        if (userStake.stakedBalance == 0) userStake.stakeEndTime = 0;
 
         /// @dev Update global stake & reward trackers
         stakedTokensTotal -= amount;

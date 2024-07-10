@@ -125,11 +125,15 @@ contract PossumCoreTest is Test {
         vm.expectRevert(InvalidAddress.selector);
         coreContract.updateWhitelist(address(0), true);
 
-        vm.expectRevert(PermanentDestination.selector);
         coreContract.updateWhitelist(PERMANENT_I, false);
+        coreContract.updateWhitelist(PERMANENT_II, false);
+        vm.expectRevert(PermanentDestination.selector);
+        coreContract.updateWhitelist(PERMANENT_III, false);
         vm.stopPrank();
 
-        assertTrue(coreContract.whitelist(PERMANENT_I));
+        assertFalse(coreContract.whitelist(PERMANENT_I));
+        assertFalse(coreContract.whitelist(PERMANENT_II));
+        assertTrue(coreContract.whitelist(PERMANENT_III));
         assertFalse(coreContract.whitelist(address(0)));
     }
 

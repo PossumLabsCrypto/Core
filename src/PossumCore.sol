@@ -350,14 +350,14 @@ contract PossumCore is ReentrancyGuard {
             revert InvalidAddress();
         }
 
-        /// @dev Prevent updating the status of unchangeable destinations
-        if (_destination == PERMANENT_I || _destination == PERMANENT_II || _destination == PERMANENT_III) {
-            revert PermanentDestination();
-        }
-
         whitelist[_destination] = _listed;
 
         /// @dev Emit the event that the whitelist was updated
         emit WhitelistUpdated(_destination, _listed);
+
+        /// @dev Guarantee at least one of the permanent addresses to remain
+        if (!whitelist[PERMANENT_I] && !whitelist[PERMANENT_II] && !whitelist[PERMANENT_III]) {
+            revert PermanentDestination();
+        }
     }
 }

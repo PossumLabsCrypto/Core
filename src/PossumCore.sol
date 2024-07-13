@@ -54,7 +54,7 @@ contract PossumCore {
     uint256 public constant SECONDS_PER_YEAR = 31536000; // Max stake duration
     uint256 public constant MAX_APR = 7200; // Accrual rate of CF at maximum stake duration (10000 = 100%)
     uint256 public constant MIN_APR = 1200; // Accrual rate of CF at stake duration = 0 (10000 = 100%)
-    uint256 public constant DIFF_APR = 6000;
+    uint256 private constant DIFF_APR = 6000;
     uint256 private constant APR_SCALING = 10000;
 
     uint256 public stakedTokensTotal; // The PSM tokens deposited by stakers
@@ -125,7 +125,7 @@ contract PossumCore {
         uint256 oldStakedBalance = userStake.stakedBalance;
 
         /// @dev Calculate and cache the stake end time
-        uint256 newEndTime = block.timestamp + duration; //@audit unchecked
+        uint256 newEndTime = block.timestamp + duration;
         uint256 oldEndTime = userStake.stakeEndTime;
 
         /// @dev Ensure that the user stake duration used for calculations is at least the remaining duration
@@ -136,19 +136,19 @@ contract PossumCore {
         uint256 coreFragments = getFragments(msg.sender);
 
         /// @dev Calculate the new average Core Fragments accrual rate (APR)
-        uint256 currentAPR = userStake.CoreFragmentsAPR;
+        uint256 currentAPR = userStake.coreFragmentsAPR;
         uint256 earningBalance = oldStakedBalance + userStake.reservedRewards;
         uint256 fragmentsAPR = _getFragmentsAPR(earningBalance, amount, duration, currentAPR);
 
         /// @dev Update User stake struct
-        userStake.stakedBalance = oldStakedBalance + amount; //@audit unchecked
+        userStake.stakedBalance = oldStakedBalance + amount;
         userStake.stakeEndTime = (newEndTime > oldEndTime) ? newEndTime : oldEndTime;
         userStake.storedCoreFragments = coreFragments;
         userStake.lastDistributionTime = block.timestamp;
-        userStake.CoreFragmentsAPR = fragmentsAPR;
+        userStake.coreFragmentsAPR = fragmentsAPR;
 
         /// @dev Update the global stake information
-        stakedTokensTotal = stakedTokensTotal + amount; //@audit unchecked
+        stakedTokensTotal = stakedTokensTotal + amount;
 
         /// @dev Transfer tokens to contract
         IERC20(PSM_ADDRESS).transferFrom(msg.sender, address(this), amount);
@@ -186,8 +186,8 @@ contract PossumCore {
 
         /// @dev Update the user stake
         uint256 fragments = getFragments(msg.sender);
-        userStake.stakedBalance = userStake.stakedBalance - amount; //@audit unchecked
-        userStake.reservedRewards = userStake.reservedRewards - affectedRewards; //@audit unchecked
+        userStake.stakedBalance = userStake.stakedBalance - amount;
+        userStake.reservedRewards = userStake.reservedRewards - affectedRewards;
         userStake.storedCoreFragments = fragments;
         userStake.lastDistributionTime = block.timestamp;
 
@@ -195,14 +195,13 @@ contract PossumCore {
         if (userStake.stakedBalance == 0) userStake.stakeEndTime = 0;
 
         /// @dev Update global stake & reward trackers
-        stakedTokensTotal = stakedTokensTotal - amount; //@audit unchecked
-        reservedRewardsTotal = reservedRewardsTotal - affectedRewards; //@audit unchecked
-
+        stakedTokensTotal = stakedTokensTotal - amount;
+        reservedRewardsTotal = reservedRewardsTotal - affectedRewards;
         /// @dev If the stake duration has passed, add rewards to the amount to withdraw
         /// @dev If duration has not passed, rewards are forfeited and become available to other stakers
         uint256 amountToWithdraw = amount;
         if (block.timestamp >= endTime) {
-            amountToWithdraw += affectedRewards; //@audit unchecked
+            amountToWithdraw += affectedRewards;
         }
 
         /// @dev Transfer stake and potential rewards to user
@@ -255,16 +254,16 @@ contract PossumCore {
         /// @dev The increase of user rewards has priority over distributing tokens to the destination
         if (availablePSM < amount * 2) {
             if (availablePSM <= amount) {
-                userFragments -= availablePSM; //@audit unchecked
+                userFragments -= availablePSM;
                 rewards = availablePSM;
                 distributed = 0;
             } else {
-                userFragments -= amount; //@audit unchecked
+                userFragments -= amount;
                 rewards = amount;
-                distributed = availablePSM - amount; //@audit unchecked
+                distributed = availablePSM - amount;
             }
         } else {
-            userFragments -= amount; //@audit unchecked
+            userFragments -= amount;
             rewards = amount;
             distributed = amount;
         }
@@ -273,7 +272,7 @@ contract PossumCore {
         Stake storage userStake = stakes[msg.sender];
         /// @dev Update user stake data
         userStake.storedCoreFragments = userFragments;
-        userStake.reservedRewards = userStake.reservedRewards + rewards; //@audit unchecked
+        userStake.reservedRewards = userStake.reservedRewards + rewards;
         userStake.lastDistributionTime = block.timestamp;
 
         /// @dev Update tracking of distributed fragments & active participants
@@ -281,8 +280,8 @@ contract PossumCore {
         fragmentsDistributed[msg.sender] = fragmentsDistributed[msg.sender] + distributed;
 
         /// @dev Update global tracker of rewards and distributed tokens
-        reservedRewardsTotal = reservedRewardsTotal + rewards; //@audit unchecked blocks
-        distributed_PSM = distributed_PSM + distributed; //@audit unchecked blocks
+        reservedRewardsTotal = reservedRewardsTotal + rewards;
+        distributed_PSM = distributed_PSM + distributed;
 
         /// @dev Transfer incentives to destination
         if (distributed > 0) {
@@ -301,7 +300,7 @@ contract PossumCore {
     function getAvailableTokens() public view returns (uint256 availableTokens) {
         unchecked {
             availableTokens = IERC20(PSM_ADDRESS).balanceOf(address(this)) - stakedTokensTotal - reservedRewardsTotal;
-        } //@audit unchecked
+        }
     }
 
     /// @notice Return the amount of Core Fragments that the user can distribute
@@ -317,7 +316,7 @@ contract PossumCore {
         Stake memory userStake = stakes[_user];
 
         /// @dev Get the parameters necessary to calculate the accrued fragments
-        uint256 timePassed = block.timestamp - userStake.lastDistributionTime; //@audit unchecked
+        uint256 timePassed = block.timestamp - userStake.lastDistributionTime;
         uint256 earningBalance = userStake.stakedBalance + userStake.reservedRewards;
 
         /// @dev Calculate the available Core Fragments of the user

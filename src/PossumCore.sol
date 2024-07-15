@@ -168,10 +168,12 @@ contract PossumCore is ReentrancyGuard {
         Stake storage userStake = stakes[msg.sender];
         uint256 balance = userStake.stakedBalance;
         uint256 rewards = userStake.reservedRewards;
+        uint256 fragments = getFragments(msg.sender);
         uint256 endTime = userStake.stakeEndTime;
         uint256 amount = (_amount > balance) ? balance : _amount;
         if (balance == 0) revert InvalidAmount();
         uint256 affectedRewards = (rewards * amount) / balance;
+        uint256 affectedFragments = (fragments * amount) / balance;
 
         /// @dev Check that the user has a stake
         if (amount == 0) {
@@ -183,10 +185,9 @@ contract PossumCore is ReentrancyGuard {
         if (affectedRewards == 0 && rewards > 0) revert InvalidAmount();
 
         /// @dev Update the user stake
-        uint256 fragments = getFragments(msg.sender);
         userStake.stakedBalance -= amount;
         userStake.reservedRewards -= affectedRewards;
-        userStake.storedCoreFragments = fragments;
+        userStake.storedCoreFragments = fragments - affectedFragments;
         userStake.lastDistributionTime = block.timestamp;
         /// @dev reset the stake end time if the user withdraws all to not conflict with new stakes
         if (userStake.stakedBalance == 0) userStake.stakeEndTime = 0;

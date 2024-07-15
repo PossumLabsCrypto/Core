@@ -293,6 +293,7 @@ contract PossumCoreTest is Test {
         coreContract.unstakeAndClaim(amountUnstake);
 
         (uint256 stakeBalance,,, uint256 storedCoreFragments, uint256 lastDistributionTime,) = coreContract.stakes(Bob);
+        uint256 coreFragmentsCheck = fragmentsSaved - (fragmentsSaved * amountUnstake) / amountStaked;
 
         uint256 contractBalanceCheck = psmAmount + amountStaked - amountUnstake;
         uint256 availablePSM = coreContract.getAvailableTokens();
@@ -300,7 +301,7 @@ contract PossumCoreTest is Test {
         assertEq(psm.balanceOf(address(coreContract)), contractBalanceCheck);
         assertEq(availablePSM, psmAmount); // initial amount
         assertEq(stakeBalance, amountStaked - amountUnstake); // 9e23
-        assertEq(storedCoreFragments, fragmentsSaved); //
+        assertEq(storedCoreFragments, coreFragmentsCheck); //
         assertEq(lastDistributionTime, block.timestamp);
     }
 

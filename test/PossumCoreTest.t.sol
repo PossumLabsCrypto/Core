@@ -155,7 +155,7 @@ contract PossumCoreTest is Test {
         vm.expectRevert(InvalidAmount.selector);
         coreContract.stake(0, 0);
 
-        uint256 duration = coreContract.MAX_STAKE_DURATION() + 1;
+        uint256 duration = coreContract.MAX_COMMITMENT() + 1;
         vm.expectRevert(InvalidDuration.selector);
         coreContract.stake(111, duration);
         vm.stopPrank();
@@ -187,15 +187,15 @@ contract PossumCoreTest is Test {
         uint256 contractBalance = psm.balanceOf(address(coreContract));
         uint256 availablePSM = coreContract.getAvailableTokens();
 
-        (uint256 stakeAmount, uint256 stakeEndTime,,, uint256 lastDistributionTime, uint256 CoreFragmentsAPR) =
+        (uint256 stakeAmount, uint256 commitmentEnd,,, uint256 lastDistributionTime, uint256 CoreFragmentsAPR) =
             coreContract.stakes(Alice);
         uint256 checkAPR = coreContract.MIN_APR()
-            + ((coreContract.MAX_APR() - coreContract.MIN_APR()) * duration) / coreContract.MAX_STAKE_DURATION();
+            + ((coreContract.MAX_APR() - coreContract.MIN_APR()) * duration) / coreContract.MAX_COMMITMENT();
 
         assertEq(contractBalance, psmAmount + amount);
         assertEq(availablePSM, psmAmount);
         assertEq(stakeAmount, amount);
-        assertEq(stakeEndTime, block.timestamp + duration);
+        assertEq(commitmentEnd, block.timestamp + duration);
         assertEq(lastDistributionTime, block.timestamp);
         assertEq(CoreFragmentsAPR, checkAPR);
     }
@@ -204,7 +204,7 @@ contract PossumCoreTest is Test {
         helper_stake_Bob();
 
         uint256 amount = 1e24;
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
 
         // skip half the staking time
         uint256 timePassed = duration / 2;
@@ -219,7 +219,7 @@ contract PossumCoreTest is Test {
 
         (
             uint256 stakeBalance,
-            uint256 stakeEndTime,
+            uint256 commitmentEnd,
             uint256 reservedRewards,
             uint256 storedCoreFragments,
             uint256 lastDistributionTime,
@@ -238,25 +238,25 @@ contract PossumCoreTest is Test {
         assertEq(stakeBalance, stakeSum);
         assertEq(reservedRewards, 0);
         assertEq(storedCoreFragments, fragmentsSaved);
-        assertEq(stakeEndTime, block.timestamp + timePassed);
+        assertEq(commitmentEnd, block.timestamp + timePassed);
         assertEq(lastDistributionTime, block.timestamp);
         assertEq(coreFragmentsAPR, checkAPR);
     }
 
     function testRevert_unstakeAndClaim() public {
         vm.prank(Bob);
-        vm.expectRevert(InvalidAmount.selector);
+        vm.expectRevert(NoStake.selector);
         coreContract.unstakeAndClaim(0);
 
         helper_stake_Bob();
 
         vm.prank(Bob);
-        vm.expectRevert(NoStake.selector);
+        vm.expectRevert(InvalidAmount.selector);
         coreContract.unstakeAndClaim(0);
 
         uint256 amountStaked = 1e24;
         uint256 amountUnstake = 2; // unstake 2 WEI
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
 
         // pass half the staking time
         uint256 timePassed = duration / 2;
@@ -280,7 +280,7 @@ contract PossumCoreTest is Test {
 
         uint256 amountStaked = 1e24;
         uint256 amountUnstake = 1e23;
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
 
         // pass half the staking time
         uint256 timePassed = duration / 2;
@@ -311,7 +311,7 @@ contract PossumCoreTest is Test {
 
         uint256 amountStaked = 1e24;
         uint256 amountUnstake = 1e23;
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
 
         // pass half the staking time
         uint256 timePassed = duration / 2;
@@ -358,7 +358,7 @@ contract PossumCoreTest is Test {
 
         uint256 amountStaked = 1e24;
         uint256 amountUnstake = 1e23;
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
 
         // pass the staking time
         uint256 timePassed = duration;
@@ -406,7 +406,7 @@ contract PossumCoreTest is Test {
     function testRevert_distributeCoreFragments() public {
         helper_stake_Bob();
 
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
         uint256 later = block.timestamp + duration / 2;
 
         // pass half the staking time
@@ -429,7 +429,7 @@ contract PossumCoreTest is Test {
     function testSuccess_distributeCoreFragments() public {
         helper_stake_Bob();
 
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
         uint256 later = block.timestamp + duration / 2;
 
         // pass half the staking time
@@ -456,7 +456,7 @@ contract PossumCoreTest is Test {
         helper_stake_Bob();
 
         uint256 amount = 1e24;
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
         uint256 later = block.timestamp + duration / 2;
         uint256 end = block.timestamp + duration;
 
@@ -493,7 +493,7 @@ contract PossumCoreTest is Test {
     function testSuccess_distributeCoreFragments_edgeCase1() public {
         helper_stake_Bob();
 
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
         uint256 later = block.timestamp + duration * 10;
 
         // pass 10 years
@@ -531,7 +531,7 @@ contract PossumCoreTest is Test {
     function testSuccess_distributeCoreFragments_edgeCase2() public {
         helper_stake_Bob();
 
-        uint256 duration = coreContract.MAX_STAKE_DURATION();
+        uint256 duration = coreContract.MAX_COMMITMENT();
         uint256 later = block.timestamp + duration * 100;
         uint256 available = coreContract.getAvailableTokens();
 

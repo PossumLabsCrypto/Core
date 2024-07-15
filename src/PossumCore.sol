@@ -2,8 +2,6 @@
 pragma solidity =0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 // ============================================
 // ==              CUSTOM ERRORS             ==
@@ -11,7 +9,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 error InsufficientRewards();
 error InvalidAddress();
 error InvalidAmount();
-error InvalidConstructor();
 error InvalidDuration();
 error NoStake();
 error NotGuardian();
@@ -24,20 +21,21 @@ error PermanentDestination();
 /* Users make a committment to stake PSM at least for a chosen duration upon staking
 /* The longer the commitment period, the higher the Core Fragments (CF) accrual APR
 /* CF can be spent to distribute PSM incentives to allowed addresses that are listed by the Guardian
-/* The Guardian can list and delist addresses. There are 3 permanent addresses that cannot be delisted.
-/* Every 1 CF spent provides 1 PSM in rewards to the staker
+/* The Guardian can list and delist addresses. There is at least 1 permanent addresses that cannot be delisted.
+/* Every 1 CF distributed provides 1 PSM in rewards to the staker
 /* The CF accrual APR is applied to the combined balance of staked PSM and earned rewards which enables compounding
-/* Staked PSM can be unstaked anytime irrespective of the chosen stake duration
-/* If a stake is withdrawn before the stake duration passed, accumulated rewards are forfeited proportionally
+/* Staked PSM can be unstaked anytime irrespective of the chosen commitment period
+/* If a stake is withdrawn before the commitment period passed, accumulated rewards are forfeited proportionally
 /* If users unstake after the stake expired, they receive their original stake and all accrued rewards
 /* Users can add more PSM to their existing stake but must stake at least as long as the remaining commitment period
 /* Users can remain staked to accrue CF and compound rewards after their commitment period has passed
 */
-contract PossumCore is ReentrancyGuard {
+contract PossumCore {
     constructor() {
         whitelist[PERMANENT_I] = true;
         whitelist[PERMANENT_II] = true;
         whitelist[PERMANENT_III] = true;
+        MAX_APR = MIN_APR + APR_RANGE;
     }
 
     // ============================================
@@ -51,9 +49,10 @@ contract PossumCore is ReentrancyGuard {
     address private constant PERMANENT_II = 0x24b7d3034C711497c81ed5f70BEE2280907Ea1Fa; // HLP Portal
     address private constant PERMANENT_III = 0x212Bbd56F6D4F999B2845adebd8cec147851E383; // PortalsV2 VirtualLP
 
-    uint256 public constant MAX_STAKE_DURATION = 31536000;
-    uint256 public constant MAX_APR = 7200; // Accrual rate of CF at maximum stake duration (10000 = 100%)
-    uint256 public constant MIN_APR = 1200; // Accrual rate of CF at stake duration = 0 (10000 = 100%)
+    uint256 public constant MAX_COMMITMENT = 31536000;
+    uint256 public immutable MAX_APR; // Accrual rate of CF at maximum commitment period (10000 = 100%)
+    uint256 public constant MIN_APR = 1200; // Accrual rate of CF at commitment period = 0 (10000 = 100%)
+    uint256 private constant APR_RANGE = 6000; // Accrual rate of CF that depends on the commitment period
     uint256 private constant APR_SCALING = 10000;
 
     uint256 public stakedTokensTotal; // The PSM tokens deposited by stakers
@@ -63,11 +62,11 @@ contract PossumCore is ReentrancyGuard {
 
     struct Stake {
         uint256 stakedBalance;
-        uint256 stakeEndTime;
+        uint256 commitmentEnd;
         uint256 reservedRewards;
         uint256 storedCoreFragments;
         uint256 lastDistributionTime;
-        uint256 CoreFragmentsAPR;
+        uint256 coreFragmentsAPR;
     }
 
     mapping(address user => Stake) public stakes; // associate users with their stake
@@ -99,18 +98,18 @@ contract PossumCore is ReentrancyGuard {
     // ============================================
     /// @notice Users stake PSM for a chosen duration to earn Core Fragments
     /// @dev This function allows PSM to be staked to earn CF
-    /// @dev Users can add to their stake at any time which may prolong the stake duration
+    /// @dev Users can add to their stake at any time which may prolong the commitment period
     /// @dev New stakes are only accepted if PSM are available in the contract
     /// @param _amount The amount of tokens staked
     /// @param _duration The number of seconds until rewards can be claimed after unstaking
-    function stake(uint256 _amount, uint256 _duration) external nonReentrant {
+    function stake(uint256 _amount, uint256 _duration) external {
         /// @dev Check that the amount is valid
         if (_amount == 0) {
             revert InvalidAmount();
         }
 
         /// @dev Check that the duration is valid
-        if (_duration > MAX_STAKE_DURATION) revert InvalidDuration();
+        if (_duration > MAX_COMMITMENT) revert InvalidDuration();
 
         /// @dev Check that PSM is available
         uint256 availablePSM = getAvailableTokens();
@@ -126,26 +125,26 @@ contract PossumCore is ReentrancyGuard {
 
         /// @dev Calculate and cache the stake end time
         uint256 newEndTime = block.timestamp + duration;
-        uint256 oldEndTime = userStake.stakeEndTime;
+        uint256 oldEndTime = userStake.commitmentEnd;
 
-        /// @dev Ensure that the user stake duration used for calculations is at least the remaining duration
-        /// @dev This avoids earning potential being lost when new stakes are added with a low stake duration
+        /// @dev Ensure that the user commitment period used for calculations is at least the remaining duration
+        /// @dev This avoids earning potential being lost when new stakes are added with a low commitment period
         duration = (newEndTime >= oldEndTime) ? duration : oldEndTime - block.timestamp;
 
         /// @dev Calculate the current Core Fragments of the user
         uint256 coreFragments = getFragments(msg.sender);
 
         /// @dev Calculate the new average Core Fragments accrual rate (APR)
-        uint256 currentAPR = userStake.CoreFragmentsAPR;
+        uint256 currentAPR = userStake.coreFragmentsAPR;
         uint256 earningBalance = oldStakedBalance + userStake.reservedRewards;
         uint256 fragmentsAPR = _getFragmentsAPR(earningBalance, amount, duration, currentAPR);
 
         /// @dev Update User stake struct
         userStake.stakedBalance = oldStakedBalance + amount;
-        userStake.stakeEndTime = (newEndTime > oldEndTime) ? newEndTime : oldEndTime;
+        userStake.commitmentEnd = (newEndTime > oldEndTime) ? newEndTime : oldEndTime;
         userStake.storedCoreFragments = coreFragments;
         userStake.lastDistributionTime = block.timestamp;
-        userStake.CoreFragmentsAPR = fragmentsAPR;
+        userStake.coreFragmentsAPR = fragmentsAPR;
 
         /// @dev Update the global stake information
         stakedTokensTotal += amount;
@@ -161,24 +160,24 @@ contract PossumCore is ReentrancyGuard {
     /// @notice Allow partial withdrawals which affects the accumulated rewards proportionally
     /// @dev Update the user stake data
     /// @dev Update global stake data
-    /// @dev If the stake duration has passed, transfer rewards to user, otherwise forfeit (back to contract)
+    /// @dev If the commitment period has passed, transfer rewards to user, otherwise forfeit (back to contract)
     /// @dev Withdraw the amount and proportional rewards if applicable
-    function unstakeAndClaim(uint256 _amount) external nonReentrant {
+    function unstakeAndClaim(uint256 _amount) external {
         /// @dev Load user stake data & cache variables
         Stake storage userStake = stakes[msg.sender];
         uint256 balance = userStake.stakedBalance;
+        if (balance == 0) revert NoStake();
+
+        uint256 amount = (_amount > balance) ? balance : _amount;
+        /// @dev Check that the user has a stake
+        if (amount == 0) revert InvalidAmount();
+
         uint256 rewards = userStake.reservedRewards;
         uint256 fragments = getFragments(msg.sender);
-        uint256 endTime = userStake.stakeEndTime;
-        uint256 amount = (_amount > balance) ? balance : _amount;
-        if (balance == 0) revert InvalidAmount();
+        uint256 endTime = userStake.commitmentEnd;
+
         uint256 affectedRewards = (rewards * amount) / balance;
         uint256 affectedFragments = (fragments * amount) / balance;
-
-        /// @dev Check that the user has a stake
-        if (amount == 0) {
-            revert NoStake();
-        }
 
         /// @dev Ensure that staker cannot withdraw without affecting some rewards if accrued
         /// @dev Prevent circumventing the forfeit logic by withdrawing small amounts & cause rounding to 0
@@ -190,13 +189,13 @@ contract PossumCore is ReentrancyGuard {
         userStake.storedCoreFragments = fragments - affectedFragments;
         userStake.lastDistributionTime = block.timestamp;
         /// @dev reset the stake end time if the user withdraws all to not conflict with new stakes
-        if (userStake.stakedBalance == 0) userStake.stakeEndTime = 0;
+        if (userStake.stakedBalance == 0) userStake.commitmentEnd = 0;
 
         /// @dev Update global stake & reward trackers
         stakedTokensTotal -= amount;
         reservedRewardsTotal -= affectedRewards;
 
-        /// @dev If the stake duration has passed, add rewards to the amount to withdraw
+        /// @dev If the commitment period has passed, add rewards to the amount to withdraw
         /// @dev If duration has not passed, rewards are forfeited and become available to other stakers
         uint256 amountToWithdraw = amount;
         if (block.timestamp >= endTime) {
@@ -223,7 +222,7 @@ contract PossumCore is ReentrancyGuard {
     /// @dev Reward the user for distributing Core Fragments with an equal amount of PSM
     /// @dev Prioritize rewarding the user if the contract is short on PSM
     /// @dev Track distributed rewards by the user in mapping (info only for later use)
-    function distributeCoreFragments(address _destination, uint256 _amount) external nonReentrant {
+    function distributeCoreFragments(address _destination, uint256 _amount) external {
         /// @dev Check that the destination is valid
         if (!whitelist[_destination]) {
             revert NotWhitelisted();
@@ -240,9 +239,6 @@ contract PossumCore is ReentrancyGuard {
         address destination = _destination;
         uint256 rewards;
         uint256 distributed;
-
-        /// @dev Load user stake data and calculate available Core Fragments
-        Stake storage userStake = stakes[msg.sender];
         uint256 userFragments = getFragments(msg.sender);
 
         /// @dev Check that the amount to distribute is valid
@@ -270,6 +266,7 @@ contract PossumCore is ReentrancyGuard {
         }
 
         /// @dev Update user stake data
+        Stake storage userStake = stakes[msg.sender];
         userStake.storedCoreFragments = userFragments;
         userStake.reservedRewards += rewards;
         userStake.lastDistributionTime = block.timestamp;
@@ -304,13 +301,13 @@ contract PossumCore is ReentrancyGuard {
     /// @dev Return the total amount of CF that the user can distribute
     /// @return availableFragments The CF that can be distributed by the user to the whitelist
     function getFragments(address _user) public view returns (uint256 availableFragments) {
-        /// @dev Load user stake into memory
-        Stake memory userStake = stakes[_user];
-
         /// @dev Check for valid user
         if (_user == address(0)) {
             revert InvalidAddress();
         }
+
+        /// @dev Load user stake into memory
+        Stake memory userStake = stakes[_user];
 
         /// @dev Get the parameters necessary to calculate the accrued fragments
         uint256 timePassed = block.timestamp - userStake.lastDistributionTime;
@@ -318,7 +315,7 @@ contract PossumCore is ReentrancyGuard {
 
         /// @dev Calculate the available Core Fragments of the user
         availableFragments = userStake.storedCoreFragments
-            + (earningBalance * timePassed * userStake.CoreFragmentsAPR) / (APR_SCALING * SECONDS_PER_YEAR);
+            + (earningBalance * timePassed * userStake.coreFragmentsAPR) / (APR_SCALING * SECONDS_PER_YEAR);
     }
 
     /// @dev Calculate and return the weighted Core Fragments accrual rate (APR) for compounding stakes
@@ -329,7 +326,7 @@ contract PossumCore is ReentrancyGuard {
         returns (uint256 fragmentsAPR)
     {
         /// @dev Calculate APR for the new stake amount
-        uint256 newAPR = MIN_APR + (((MAX_APR - MIN_APR) * _newDuration) / MAX_STAKE_DURATION);
+        uint256 newAPR = MIN_APR + (((APR_RANGE) * _newDuration) / MAX_COMMITMENT);
 
         /// @dev Calculate the APR weight of old and new stake
         uint256 newStakeWeight = newAPR * _newAmount;

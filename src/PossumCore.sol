@@ -345,7 +345,7 @@ contract PossumCore {
     /// @dev Allow the Guardian to update the whitelist mapping
     /// @param _destination The address added or removed from the whitelist
     function updateWhitelist(address _destination, bool _listed) external onlyGuardian {
-        if (_destination == address(0)) {
+        if (_destination == address(0) || _destination == address(this)) {
             revert InvalidAddress();
         }
 

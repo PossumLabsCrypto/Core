@@ -177,7 +177,7 @@ contract PossumCore {
         uint256 endTime = userStake.commitmentEnd;
 
         uint256 affectedRewards = (rewards * amount) / balance;
-        uint256 affectedFragments = (fragments * amount) / balance;
+        uint256 affectedFragments = (block.timestamp < endTime) ? (fragments * amount) / balance : 0;
 
         /// @dev Ensure that staker cannot withdraw without affecting some rewards if accrued
         /// @dev Prevent circumventing the forfeit logic by withdrawing small amounts & cause rounding to 0
@@ -188,6 +188,7 @@ contract PossumCore {
         userStake.reservedRewards -= affectedRewards;
         userStake.storedCoreFragments = fragments - affectedFragments;
         userStake.lastDistributionTime = block.timestamp;
+
         /// @dev reset the stake end time if the user withdraws all to not conflict with new stakes
         if (userStake.stakedBalance == 0) userStake.commitmentEnd = 0;
 
@@ -197,10 +198,7 @@ contract PossumCore {
 
         /// @dev If the commitment period has passed, add rewards to the amount to withdraw
         /// @dev If duration has not passed, rewards are forfeited and become available to other stakers
-        uint256 amountToWithdraw = amount;
-        if (block.timestamp >= endTime) {
-            amountToWithdraw += affectedRewards;
-        }
+        uint256 amountToWithdraw = (block.timestamp >= endTime) ? amount + affectedRewards : amount;
 
         /// @dev Transfer stake and potential rewards to user
         IERC20(PSM_ADDRESS).transfer(msg.sender, amountToWithdraw);

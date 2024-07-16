@@ -246,7 +246,7 @@ contract PossumCoreTest is Test {
     function testRevert_unstakeAndClaim() public {
         vm.prank(Bob);
         vm.expectRevert(NoStake.selector);
-        coreContract.unstakeAndClaim(0);
+        coreContract.unstakeAndClaim(2);
 
         helper_stake_Bob();
 

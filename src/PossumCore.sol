@@ -163,15 +163,15 @@ contract PossumCore {
     /// @dev If the commitment period has passed, transfer rewards to user, otherwise forfeit (back to contract)
     /// @dev Withdraw the amount and proportional rewards if applicable
     function unstakeAndClaim(uint256 _amount) external {
+        /// @dev Check that the user has a stake
+        if (_amount == 0) revert InvalidAmount();
+
         /// @dev Load user stake data & cache variables
         Stake storage userStake = stakes[msg.sender];
         uint256 balance = userStake.stakedBalance;
         if (balance == 0) revert NoStake();
 
         uint256 amount = (_amount > balance) ? balance : _amount;
-        /// @dev Check that the user has a stake
-        if (amount == 0) revert InvalidAmount();
-
         uint256 rewards = userStake.reservedRewards;
         uint256 fragments = getFragments(msg.sender);
         uint256 endTime = userStake.commitmentEnd;

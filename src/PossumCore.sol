@@ -177,7 +177,7 @@ contract PossumCore {
         if (amount > balance && amount < type(uint256).max) revert InvalidAmount();
 
         /// @dev Unstake all if the input is max of uint256 (fat finger protection)
-        if (amount > balance && amount == type(uint256).max) amount = balance;
+        if (amount == type(uint256).max) amount = balance;
 
         /// @dev Cache variables
         uint256 rewards = userStake.reservedRewards;
@@ -252,7 +252,7 @@ contract PossumCore {
         if (amount == 0) revert InvalidAmount();
 
         /// @dev Use all available Fragments if the input is max of uint256 (fat finger protection)
-        if (amount > userFragments && amount == type(uint256).max) amount = userFragments;
+        if (amount == type(uint256).max) amount = userFragments;
 
         /// @dev Calculate the amount of rewards for the user, new fragments balance and distributed tokens
         /// @dev The user earns as many PSM as Core Fragments distributed in normal situations

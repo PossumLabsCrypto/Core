@@ -163,15 +163,23 @@ contract PossumCore {
     /// @dev If the commitment period has passed, transfer rewards to user, otherwise forfeit (back to contract)
     /// @dev Withdraw the amount and proportional rewards if applicable
     function unstakeAndClaim(uint256 _amount) external {
-        /// @dev Check that the user has a stake
-        if (_amount == 0) revert InvalidAmount();
+        uint256 amount = _amount;
 
-        /// @dev Load user stake data & cache variables
+        /// @dev Ensure that the amount is non-zero
+        if (amount == 0) revert InvalidAmount();
+
+        /// @dev Load user stake data
         Stake storage userStake = stakes[msg.sender];
         uint256 balance = userStake.stakedBalance;
-        if (balance == 0) revert NoStake();
 
-        uint256 amount = (_amount > balance) ? balance : _amount;
+        /// @dev Balance and amount vailidty checks
+        if (balance == 0) revert NoStake();
+        if (amount > balance && amount < type(uint256).max) revert InvalidAmount();
+
+        /// @dev Unstake all if the input is max of uint256 (fat finger protection)
+        if (amount > balance && amount == type(uint256).max) amount = balance;
+
+        /// @dev Cache variables
         uint256 rewards = userStake.reservedRewards;
         uint256 fragments = getFragments(msg.sender);
         uint256 endTime = userStake.commitmentEnd;
@@ -240,9 +248,11 @@ contract PossumCore {
         uint256 userFragments = getFragments(msg.sender);
 
         /// @dev Check that the amount to distribute is valid
-        if (userFragments < amount || amount == 0) {
-            revert InvalidAmount();
-        }
+        if (amount > userFragments && amount < type(uint256).max) revert InvalidAmount();
+        if (amount == 0) revert InvalidAmount();
+
+        /// @dev Use all available Fragments if the input is max of uint256 (fat finger protection)
+        if (amount > userFragments && amount == type(uint256).max) amount = userFragments;
 
         /// @dev Calculate the amount of rewards for the user, new fragments balance and distributed tokens
         /// @dev The user earns as many PSM as Core Fragments distributed in normal situations

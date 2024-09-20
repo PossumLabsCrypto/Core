@@ -21,4 +21,4 @@ contract Deploy is Script {
     }
 }
 
-// forg script script/Deploy.s.sol:Deploy --rpc-url $ARB_MAINNET_URL --private-key $PRIVATE_KEY --broadcast --verify --verifier etherscan --etherscan-api-key $ARBISCAN_API_KEY --optimize --optimizer-runs 1000
+// forge script script/Deploy.s.sol:Deploy --rpc-url $ARB_MAINNET_URL --private-key $PRIVATE_KEY --broadcast --verify --verifier etherscan --etherscan-api-key $ARBISCAN_API_KEY --optimize --optimizer-runs 1000
